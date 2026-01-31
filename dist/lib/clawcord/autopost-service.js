@@ -11,6 +11,8 @@ const DEFAULT_AUTOPOST_CONFIG = {
     intervalMs: 60_000, // 1 minute
     minScore: 6.5,
 };
+const DEDUPE_WINDOW_HOURS = 24;
+const DEDUPE_LOG_LIMIT = 200;
 const SOCIAL_PRIORITY = ["twitter", "telegram", "discord", "medium", "github", "reddit"];
 const SOCIAL_LABELS = {
     twitter: "X",
@@ -181,8 +183,20 @@ class AutopostService {
                 console.log(`   📭 No high-potential candidates to post`);
                 continue;
             }
+            const dedupeSince = new Date(Date.now() - DEDUPE_WINDOW_HOURS * 60 * 60 * 1000);
+            const recentLogs = await storage.getCallLogsSince(guild.guildId, dedupeSince, DEDUPE_LOG_LIMIT);
+            const recentMints = new Set(recentLogs
+                .map((log) => log.callCard?.token?.mint)
+                .filter((mint) => Boolean(mint)));
+            if (recentMints.size > 0) {
+                console.log(`   🔁 Dedupe active: ${recentMints.size} tokens posted in last ${DEDUPE_WINDOW_HOURS}h`);
+            }
             for (const candidate of highPotential) {
-                console.log(`   📤 Sending call for $${candidate.graduation.symbol} to channel ${guild.channelId}...`);
+                if (recentMints.has(candidate.graduation.mint)) {
+                    console.log(`   � Skipping duplicate $${candidate.graduation.symbol} (posted in last ${DEDUPE_WINDOW_HOURS}h)`);
+                    continue;
+                }
+                console.log(`   �📤 Sending call for $${candidate.graduation.symbol} to channel ${guild.channelId}...`);
                 const message = this.formatGraduationCall(candidate);
                 const success = await this.sendDiscordMessage(guild.channelId, message);
                 if (success) {
@@ -199,6 +213,7 @@ class AutopostService {
                         triggeredBy: "auto",
                         createdAt: new Date(),
                     });
+                    recentMints.add(candidate.graduation.mint);
                 }
                 else {
                     console.log(`   ❌ Failed to send message - check bot permissions`);
