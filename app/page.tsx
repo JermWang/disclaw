@@ -109,12 +109,21 @@ export default function ClawCordLanding() {
               A Signal Caller&apos;s Best Friend
             </p>
             
-            <h1 
-              className="text-5xl md:text-7xl font-bold text-white mb-6"
-              style={{ fontFamily: "var(--font-figtree), Figtree" }}
-            >
-              <span className="text-red-400">Claw</span>Cord
-            </h1>
+            <div className="flex items-center justify-center gap-4 mb-6">
+              <Image
+                src="/ClawCord logo.png"
+                alt="ClawCord Logo"
+                width={80}
+                height={80}
+                className="w-16 h-16 md:w-20 md:h-20"
+              />
+              <h1 
+                className="text-5xl md:text-7xl font-bold text-white"
+                style={{ fontFamily: "var(--font-figtree), Figtree" }}
+              >
+                <span className="text-red-400">Claw</span>Cord
+              </h1>
+            </div>
             
             <p className="text-xl md:text-2xl text-gray-400 mb-8 max-w-2xl mx-auto leading-relaxed">
               Policy-driven signal caller for Solana tokens.
@@ -151,6 +160,24 @@ export default function ClawCordLanding() {
             <div className="w-1 h-2 bg-white/50 rounded-full" />
           </div>
         </motion.div>
+
+        {/* Powered by OpenClaw AI - bottom left corner */}
+        <motion.a
+          href="https://openclaw.ai"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="absolute bottom-6 left-6 z-20 flex items-center gap-2 opacity-50 hover:opacity-80 transition-opacity"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 0.5 }}
+          transition={{ delay: 1, duration: 0.5 }}
+        >
+          <div className="w-5 h-5 rounded bg-gradient-to-br from-red-500 to-red-700 flex items-center justify-center">
+            <span className="text-white text-xs font-bold">O</span>
+          </div>
+          <span className="text-white/70 text-xs tracking-wide" style={{ fontFamily: "var(--font-figtree), Figtree" }}>
+            Powered by <span className="font-medium text-white/90">OpenClaw AI</span>
+          </span>
+        </motion.a>
       </section>
 
       {/* ===== TRANSITION FADE ===== */}
