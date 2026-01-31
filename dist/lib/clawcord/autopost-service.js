@@ -57,6 +57,17 @@ function extractSocialLinks(pair) {
     }
     return ordered.slice(0, 4);
 }
+function hasTwitterLink(pair) {
+    const socials = pair.info?.socials ?? [];
+    return socials.some((social) => {
+        const type = normalizeSocialType(social.type);
+        if (type === "twitter") {
+            return true;
+        }
+        const url = social.url?.toLowerCase() || "";
+        return url.includes("twitter.com") || url.includes("x.com");
+    });
+}
 class AutopostService {
     watcher;
     intervalId = null;
@@ -142,9 +153,13 @@ class AutopostService {
         // Filter to high-potential candidates
         const highPotential = candidates.filter((c) => c.passesFilter && c.score >= this.config.minScore);
         console.log(`✅ ${highPotential.length} candidates pass filters (minScore: ${this.config.minScore})`);
-        if (highPotential.length > 0) {
+        const twitterLinked = highPotential.filter((c) => hasTwitterLink(c.pair));
+        if (twitterLinked.length !== highPotential.length) {
+            console.log(`🐦 ${twitterLinked.length} candidates have Twitter/X links (required)`);
+        }
+        if (twitterLinked.length > 0) {
             console.log(`🏆 High potential tokens:`);
-            highPotential.forEach((c, i) => {
+            twitterLinked.forEach((c, i) => {
                 console.log(`   ${i + 1}. $${c.graduation.symbol} | Score: ${c.score.toFixed(1)} | MCap: $${(c.pair.marketCap || 0).toLocaleString()} | Liq: $${(c.pair.liquidity?.usd || 0).toLocaleString()}`);
             });
         }
@@ -179,8 +194,8 @@ class AutopostService {
                 console.log(`   ⏸️  Skipping - daily limit reached`);
                 continue;
             }
-            if (highPotential.length === 0) {
-                console.log(`   📭 No high-potential candidates to post`);
+            if (twitterLinked.length === 0) {
+                console.log(`   📭 No Twitter-linked candidates to post`);
                 continue;
             }
             const dedupeSince = new Date(Date.now() - DEDUPE_WINDOW_HOURS * 60 * 60 * 1000);
@@ -191,12 +206,12 @@ class AutopostService {
             if (recentMints.size > 0) {
                 console.log(`   🔁 Dedupe active: ${recentMints.size} tokens posted in last ${DEDUPE_WINDOW_HOURS}h`);
             }
-            for (const candidate of highPotential) {
+            for (const candidate of twitterLinked) {
                 if (recentMints.has(candidate.graduation.mint)) {
-                    console.log(`   � Skipping duplicate $${candidate.graduation.symbol} (posted in last ${DEDUPE_WINDOW_HOURS}h)`);
+                    console.log(`   🔁 Skipping duplicate $${candidate.graduation.symbol} (posted in last ${DEDUPE_WINDOW_HOURS}h)`);
                     continue;
                 }
-                console.log(`   �📤 Sending call for $${candidate.graduation.symbol} to channel ${guild.channelId}...`);
+                console.log(`   📤 Sending call for $${candidate.graduation.symbol} to channel ${guild.channelId}...`);
                 const message = this.formatGraduationCall(candidate);
                 const success = await this.sendDiscordMessage(guild.channelId, message);
                 if (success) {
@@ -220,7 +235,7 @@ class AutopostService {
                 }
             }
         }
-        console.log(`\n📊 Scan complete: ${sent} messages sent for ${highPotential.length} candidates`);
+        console.log(`\n📊 Scan complete: ${sent} messages sent for ${twitterLinked.length} candidates`);
         console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
         return { sent, candidates: highPotential.length };
     }
