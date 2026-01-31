@@ -1,4 +1,5 @@
 import { Client, GatewayIntentBits, Events, REST, Routes, ActivityType } from 'discord.js';
+import { getGuildSettings, updateGuildSettings, supabase } from './supabase';
 
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN!;
 const DISCORD_APPLICATION_ID = process.env.DISCORD_APPLICATION_ID!;
@@ -19,30 +20,6 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
   ],
 });
-
-// In-memory storage for guild settings (in production, use a database)
-const guildSettings = new Map<string, {
-  channelId: string | null;
-  minScore: number;
-  autopost: boolean;
-  showVolume: boolean;
-  showHolders: boolean;
-  showLinks: boolean;
-}>();
-
-function getGuildSettings(guildId: string) {
-  if (!guildSettings.has(guildId)) {
-    guildSettings.set(guildId, {
-      channelId: null,
-      minScore: 6.5,
-      autopost: false,
-      showVolume: true,
-      showHolders: true,
-      showLinks: true,
-    });
-  }
-  return guildSettings.get(guildId)!;
-}
 
 const commands = [
   {
@@ -278,23 +255,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    const settings = getGuildSettings(interaction.guildId);
+    const settings = await getGuildSettings(interaction.guildId, interaction.guild?.name);
     const subcommand = interaction.options.getSubcommand();
 
     if (subcommand === 'view') {
-      const channelMention = settings.channelId ? `<#${settings.channelId}>` : 'Not set';
+      const channelMention = settings.channel_id ? `<#${settings.channel_id}>` : 'Not set';
       await interaction.reply({
         content: [
           '⚙️ **ClawCord Settings**',
           '',
           `📢 **Call Channel:** ${channelMention}`,
-          `📊 **Min Score:** ${settings.minScore}/10`,
+          `📊 **Min Score:** ${settings.min_score}/10`,
           `🔄 **Autopost:** ${settings.autopost ? '✅ Enabled' : '❌ Disabled'}`,
           '',
           '**Display Options:**',
-          `• Volume: ${settings.showVolume ? '✅' : '❌'}`,
-          `• Holders: ${settings.showHolders ? '✅' : '❌'}`,
-          `• Links: ${settings.showLinks ? '✅' : '❌'}`,
+          `• Volume: ${settings.show_volume ? '✅' : '❌'}`,
+          `• Holders: ${settings.show_holders ? '✅' : '❌'}`,
+          `• Links: ${settings.show_links ? '✅' : '❌'}`,
         ].join('\n'),
         ephemeral: true,
       });
@@ -302,7 +279,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (subcommand === 'minscore') {
       const score = interaction.options.getInteger('score', true);
-      settings.minScore = score;
+      await updateGuildSettings(interaction.guildId, { min_score: score });
       await interaction.reply({
         content: `✅ Minimum score set to **${score}/10**\n\nOnly calls with score ≥ ${score} will be posted.`,
         ephemeral: true,
@@ -311,7 +288,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (subcommand === 'autopost') {
       const enabled = interaction.options.getBoolean('enabled', true);
-      settings.autopost = enabled;
+      await updateGuildSettings(interaction.guildId, { autopost: enabled });
       await interaction.reply({
         content: enabled 
           ? '✅ **Autopost enabled!**\n\nClawCord will automatically post graduation calls to your configured channel.'
@@ -325,17 +302,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const holders = interaction.options.getBoolean('holders');
       const links = interaction.options.getBoolean('links');
 
-      if (volume !== null) settings.showVolume = volume;
-      if (holders !== null) settings.showHolders = holders;
-      if (links !== null) settings.showLinks = links;
+      const updates: Record<string, boolean> = {};
+      if (volume !== null) updates.show_volume = volume;
+      if (holders !== null) updates.show_holders = holders;
+      if (links !== null) updates.show_links = links;
+
+      await updateGuildSettings(interaction.guildId, updates);
+      const newSettings = await getGuildSettings(interaction.guildId);
 
       await interaction.reply({
         content: [
           '✅ **Display settings updated!**',
           '',
-          `• Volume: ${settings.showVolume ? '✅ Shown' : '❌ Hidden'}`,
-          `• Holders: ${settings.showHolders ? '✅ Shown' : '❌ Hidden'}`,
-          `• Links: ${settings.showLinks ? '✅ Shown' : '❌ Hidden'}`,
+          `• Volume: ${newSettings.show_volume ? '✅ Shown' : '❌ Hidden'}`,
+          `• Holders: ${newSettings.show_holders ? '✅ Shown' : '❌ Hidden'}`,
+          `• Links: ${newSettings.show_links ? '✅ Shown' : '❌ Hidden'}`,
         ].join('\n'),
         ephemeral: true,
       });
@@ -350,8 +331,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     const channel = interaction.options.getChannel('channel', true);
-    const settings = getGuildSettings(interaction.guildId);
-    settings.channelId = channel.id;
+    await updateGuildSettings(interaction.guildId, { 
+      channel_id: channel.id,
+      guild_name: interaction.guild?.name 
+    });
 
     await interaction.reply({
       content: [
