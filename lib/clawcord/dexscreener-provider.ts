@@ -22,32 +22,24 @@ export class DexScreenerProvider {
     if (cached && Date.now() - cached.timestamp < this.cacheTTL) {
       return cached.data;
     }
-    const profilePairs = await this.getLatestPairsFromProfiles(limit);
-    if (profilePairs.length > 0) {
-      this.cache.set(cacheKey, { data: profilePairs, timestamp: Date.now() });
-      return profilePairs;
+    const [profilePairs, pumpSwapPairs, raydiumPairs] = await Promise.all([
+      this.getLatestPairsFromProfiles(limit),
+      this.searchTokens("pumpswap"),
+      this.searchTokens("raydium"),
+    ]);
+
+    const mergedPairs = this.mergePumpfunPairs(
+      [...profilePairs, ...pumpSwapPairs, ...raydiumPairs],
+      limit
+    );
+
+    if (mergedPairs.length === 0) {
+      console.warn(`No PumpFun pairs found across profiles, PumpSwap, or Raydium.`);
+      return [];
     }
 
-    console.warn(`Token profiles returned 0 pairs. Falling back to PumpSwap search.`);
-    const searchPairs = await this.searchTokens("pumpswap");
-    const pumpfunPairs = searchPairs.filter((pair) => this.isPumpfunMint(pair.baseToken.address));
-
-    if (pumpfunPairs.length > 0) {
-      this.cache.set(cacheKey, { data: pumpfunPairs, timestamp: Date.now() });
-      return pumpfunPairs;
-    }
-
-    console.warn(`PumpSwap search returned 0 PumpFun pairs. Falling back to Raydium search.`);
-    const raydiumPairs = await this.searchTokens("raydium");
-    const raydiumPumpfunPairs = raydiumPairs.filter((pair) => this.isPumpfunMint(pair.baseToken.address));
-    if (raydiumPumpfunPairs.length > 0) {
-      this.cache.set(cacheKey, { data: raydiumPumpfunPairs, timestamp: Date.now() });
-      return raydiumPumpfunPairs;
-    }
-
-    console.warn(`Raydium search returned 0 PumpFun pairs. Returning Raydium results.`);
-    this.cache.set(cacheKey, { data: raydiumPairs, timestamp: Date.now() });
-    return raydiumPairs;
+    this.cache.set(cacheKey, { data: mergedPairs, timestamp: Date.now() });
+    return mergedPairs;
   }
 
   private async getLatestPairsFromProfiles(limit = 50): Promise<DexScreenerPair[]> {
@@ -70,7 +62,12 @@ export class DexScreenerProvider {
       }>;
 
       const solanaMints = profiles
-        .filter((profile) => profile.chainId === "solana" && profile.tokenAddress)
+        .filter(
+          (profile) =>
+            profile.chainId === "solana" &&
+            profile.tokenAddress &&
+            this.isPumpfunMint(profile.tokenAddress)
+        )
         .map((profile) => profile.tokenAddress as string)
         .slice(0, Math.max(10, Math.min(limit, 30)));
 
@@ -87,6 +84,34 @@ export class DexScreenerProvider {
       console.error("Failed to fetch DexScreener token profiles:", error);
       return [];
     }
+  }
+
+  private mergePumpfunPairs(pairs: DexScreenerPair[], limit: number): DexScreenerPair[] {
+    const filtered = pairs.filter(
+      (pair) =>
+        pair.chainId === "solana" &&
+        (pair.dexId === "raydium" || pair.dexId === "pumpswap") &&
+        this.isPumpfunMint(pair.baseToken.address)
+    );
+
+    const byMint = new Map<string, DexScreenerPair>();
+    for (const pair of filtered) {
+      const existing = byMint.get(pair.baseToken.address);
+      if (!existing) {
+        byMint.set(pair.baseToken.address, pair);
+        continue;
+      }
+
+      const existingLiq = existing.liquidity?.usd || 0;
+      const candidateLiq = pair.liquidity?.usd || 0;
+      if (candidateLiq > existingLiq) {
+        byMint.set(pair.baseToken.address, pair);
+      }
+    }
+
+    return Array.from(byMint.values())
+      .sort((a, b) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0))
+      .slice(0, limit);
   }
 
   private isPumpfunMint(mint: string): boolean {
