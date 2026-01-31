@@ -38,11 +38,18 @@ export class DexScreenerProvider {
 
       if (!response.ok) {
         console.warn(
-          `DexScreener pairs endpoint failed (${response.status}). Falling back to search.`
+          `DexScreener pairs endpoint failed (${response.status}). Falling back to token profiles.`
         );
-        const fallbackPairs = await this.searchTokens("raydium");
-        this.cache.set(cacheKey, { data: fallbackPairs, timestamp: Date.now() });
-        return fallbackPairs;
+        const profilePairs = await this.getLatestPairsFromProfiles(limit);
+        if (profilePairs.length > 0) {
+          this.cache.set(cacheKey, { data: profilePairs, timestamp: Date.now() });
+          return profilePairs;
+        }
+
+        console.warn(`Token profiles fallback returned 0 pairs. Falling back to search.`);
+        const searchPairs = await this.searchTokens("raydium");
+        this.cache.set(cacheKey, { data: searchPairs, timestamp: Date.now() });
+        return searchPairs;
       }
 
       const data = await response.json() as { pairs?: DexScreenerPair[] };
@@ -57,6 +64,45 @@ export class DexScreenerProvider {
       return raydiumPairs;
     } catch (error) {
       console.error("Failed to fetch DexScreener pairs:", error);
+      return [];
+    }
+  }
+
+  private async getLatestPairsFromProfiles(limit = 50): Promise<DexScreenerPair[]> {
+    try {
+      const response = await fetch(`${DEXSCREENER_API}/token-profiles/latest/v1`, {
+        headers: {
+          "Accept": "application/json",
+          "User-Agent": "ClawCord/1.0",
+        },
+      });
+
+      if (!response.ok) {
+        console.warn(`DexScreener token profiles error: ${response.status}`);
+        return [];
+      }
+
+      const profiles = await response.json() as Array<{
+        chainId?: string;
+        tokenAddress?: string;
+      }>;
+
+      const solanaMints = profiles
+        .filter((profile) => profile.chainId === "solana" && profile.tokenAddress)
+        .map((profile) => profile.tokenAddress as string)
+        .slice(0, Math.max(10, Math.min(limit, 30)));
+
+      if (solanaMints.length === 0) {
+        return [];
+      }
+
+      const pairs = await Promise.all(
+        solanaMints.map((mint) => this.getPairByMint(mint))
+      );
+
+      return pairs.filter((pair): pair is DexScreenerPair => Boolean(pair));
+    } catch (error) {
+      console.error("Failed to fetch DexScreener token profiles:", error);
       return [];
     }
   }
