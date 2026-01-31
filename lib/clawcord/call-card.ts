@@ -89,48 +89,31 @@ function generatePros(
 }
 
 export function formatCallCardForDiscord(card: CallCard): string {
-  const riskEmojis = {
-    high: "🔴",
-    medium: "🟡",
-    low: "🟢",
+  const riskCount = {
+    high: card.risks.filter((r) => r.type === "high").length,
+    medium: card.risks.filter((r) => r.type === "medium").length,
+    low: card.risks.filter((r) => r.type === "low").length,
   };
+  const mint = `${card.token.mint.slice(0, 6)}...${card.token.mint.slice(-4)}`;
+  const dexUrl = `https://dexscreener.com/solana/${card.token.mint}`;
+  const priceChange = card.metrics.priceChange24h;
+  const priceLine = `${formatPrice(card.metrics.price)} (${priceChange >= 0 ? "+" : ""}${priceChange.toFixed(1)}%/24h)`;
+  const metricsLine = [
+    `Price ${priceLine}`,
+    `Vol ${formatNumber(card.metrics.volume24h)}`,
+    `Liq ${formatNumber(card.metrics.liquidity)}`,
+    `Holders ${card.metrics.holders}`,
+    `Age ${card.metrics.tokenAgeHours.toFixed(1)}h`,
+  ].join(" | ");
+  const metaLine = `Triggers ${card.triggers.length} | Pros ${card.pros.length} | Risks ${riskCount.high}H/${riskCount.medium}M/${riskCount.low}L | ID ${card.callId}`;
+  const contractLine = `CA: \`${card.token.mint}\` | 📊 [DexScreener](${dexUrl})`;
 
-  const confidenceBar = "█".repeat(Math.round(card.confidence)) +
-    "░".repeat(10 - Math.round(card.confidence));
-
-  let message = `
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-**$${card.token.symbol}** • \`${card.token.mint.slice(0, 8)}...${card.token.mint.slice(-4)}\`
-*Policy: ${card.policy.name} v${card.policy.version}*
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-**📊 Trigger(s):**
-${card.triggers.map((t) => `• ${t}`).join("\n")}
-
-**✅ Pros:**
-${card.pros.map((p) => `• ${p}`).join("\n")}
-
-**⚠️ Risks:**
-${card.risks.map((r) => `${riskEmojis[r.type]} ${r.message}`).join("\n")}
-
-**🚫 Invalidation:**
-${card.invalidation.map((i) => `• ${i}`).join("\n")}
-
-**📈 Confidence:** ${confidenceBar} ${card.confidence}/10
-
-**📋 Metrics Snapshot:**
-• Price: $${card.metrics.price.toFixed(8)} (${card.metrics.priceChange24h >= 0 ? "+" : ""}${card.metrics.priceChange24h.toFixed(1)}%)
-• Volume 24h: $${formatNumber(card.metrics.volume24h)}
-• Liquidity: $${formatNumber(card.metrics.liquidity)}
-• Holders: ${card.metrics.holders} (${card.metrics.holdersChange >= 0 ? "+" : ""}${card.metrics.holdersChange.toFixed(1)}%)
-• Age: ${card.metrics.tokenAgeHours.toFixed(1)}h
-
-**🧾 Call ID:** \`${card.callId}\`
-*${new Date(card.timestamp).toISOString()}*
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-`;
-
-  return message.trim();
+  return [
+    `**$${card.token.symbol}** \`${mint}\` | Score ${card.confidence.toFixed(1)}/10 | ${card.policy.name}`,
+    metricsLine,
+    metaLine,
+    contractLine,
+  ].join("\n");
 }
 
 export function formatCallCardCompact(card: CallCard): string {
@@ -139,14 +122,26 @@ export function formatCallCardCompact(card: CallCard): string {
     medium: card.risks.filter((r) => r.type === "medium").length,
     low: card.risks.filter((r) => r.type === "low").length,
   };
+  const mint = `${card.token.mint.slice(0, 6)}...${card.token.mint.slice(-4)}`;
+  const dexUrl = `https://dexscreener.com/solana/${card.token.mint}`;
 
-  return `**$${card.token.symbol}** | Conf: ${card.confidence}/10 | ${card.triggers.length} triggers | Risks: ${riskCount.high}🔴 ${riskCount.medium}🟡 ${riskCount.low}🟢 | \`${card.callId}\``;
+  return [
+    `**$${card.token.symbol}** \`${mint}\` | Score ${card.confidence.toFixed(1)}/10 | Trig ${card.triggers.length} | Risks ${riskCount.high}H/${riskCount.medium}M/${riskCount.low}L`,
+    `CA: \`${card.token.mint}\` | 📊 [DexScreener](${dexUrl}) | ID ${card.callId}`,
+  ].join("\n");
 }
 
 function formatNumber(num: number): string {
   if (num >= 1000000) return `${(num / 1000000).toFixed(2)}M`;
   if (num >= 1000) return `${(num / 1000).toFixed(1)}k`;
   return num.toFixed(2);
+}
+
+function formatPrice(value: number): string {
+  if (!Number.isFinite(value)) return "$0";
+  if (value >= 1) return `$${value.toFixed(2)}`;
+  if (value >= 0.01) return `$${value.toFixed(4)}`;
+  return `$${value.toFixed(8)}`;
 }
 
 export async function processCallRequest(

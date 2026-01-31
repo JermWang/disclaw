@@ -1,5 +1,5 @@
-import type { GraduationCandidate, GuildConfig, CallLog, DexScreenerPair } from "./types";
-import { GraduationWatcher, DEFAULT_GRADUATION_FILTER } from "./dexscreener-provider";
+import type { GraduationCandidate, GuildConfig, CallLog, DexScreenerPair, CallPerformance } from "./types";
+import { DexScreenerProvider, GraduationWatcher, DEFAULT_GRADUATION_FILTER } from "./dexscreener-provider";
 import { scoreToken } from "./scoring";
 import { generateCallCard } from "./call-card";
 import { getStorage } from "./storage";
@@ -18,6 +18,15 @@ const DEFAULT_AUTOPOST_CONFIG: AutopostConfig = {
 
 const DEDUPE_WINDOW_HOURS = 24;
 const DEDUPE_LOG_LIMIT = 200;
+
+const PERFORMANCE_INTERVAL_MS = 5 * 60 * 1000;
+const PERFORMANCE_LOOKBACK_DAYS = 30;
+const PERFORMANCE_LOG_LIMIT = 200;
+
+const BONUS_MIN_GAIN_PCT = 30;
+const BONUS_MIN_PRICE_CHANGE_M5 = 10;
+const BONUS_MIN_BUY_SELL_RATIO = 2;
+const BONUS_MIN_VOLUME_M5 = 5000;
 
 interface SocialLink {
   label: string;
@@ -88,14 +97,33 @@ function hasTwitterLink(pair: DexScreenerPair): boolean {
   });
 }
 
+function formatUsdPrice(value: number): string {
+  if (!Number.isFinite(value)) return "$0";
+  if (value >= 1) return `$${value.toFixed(2)}`;
+  if (value >= 0.01) return `$${value.toFixed(4)}`;
+  return `$${value.toFixed(8)}`;
+}
+
+function formatShortNumber(value: number): string {
+  if (!Number.isFinite(value)) return "0";
+  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(2)}B`;
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+  return value.toFixed(0);
+}
+
 export class AutopostService {
   private watcher: GraduationWatcher;
   private intervalId: NodeJS.Timeout | null = null;
+  private performanceIntervalId: NodeJS.Timeout | null = null;
+  private performanceRunning = false;
   private config: AutopostConfig;
+  private dexProvider: DexScreenerProvider;
 
   constructor(config?: Partial<AutopostConfig>) {
     this.watcher = new GraduationWatcher();
     this.config = { ...DEFAULT_AUTOPOST_CONFIG, ...config };
+    this.dexProvider = new DexScreenerProvider();
   }
 
   async sendDiscordMessage(channelId: string, content: string): Promise<boolean> {
@@ -139,36 +167,144 @@ export class AutopostService {
   formatGraduationCall(candidate: GraduationCandidate): string {
     const { graduation, pair, score } = candidate;
     const priceChange = pair.priceChange?.m5 || 0;
-    const buySellRatio = pair.txns?.m5?.sells 
-      ? (pair.txns.m5.buys / pair.txns.m5.sells).toFixed(2) 
-      : "∞";
-    const socialLinks = extractSocialLinks(pair)
-      .map((social) => `[${social.label}](${social.url})`)
-      .join(" • ");
-
-    const lines = [
-      `🎓 **$${graduation.symbol}** just graduated from PumpFun`,
-      ``,
-      `**Score:** ${score.toFixed(1)}/10`,
-      `**Price:** $${parseFloat(pair.priceUsd).toFixed(8)} (${priceChange > 0 ? "+" : ""}${priceChange.toFixed(1)}% 5m)`,
-      `**Liquidity:** $${(pair.liquidity?.usd || 0).toLocaleString()}`,
-      `**Volume 5m:** $${(pair.volume?.m5 || 0).toLocaleString()}`,
-      `**MCap:** $${(pair.marketCap || 0).toLocaleString()}`,
-      `**Buys/Sells 5m:** ${pair.txns?.m5?.buys || 0}/${pair.txns?.m5?.sells || 0} (${buySellRatio}x)`,
-      ``,
-      socialLinks ? `🔗 ${socialLinks}` : null,
-      `📊 [DexScreener](${pair.url}) | \`${graduation.mint.slice(0, 8)}...${graduation.mint.slice(-4)}\``,
-    ];
-
-    // Add risk warnings
+    const buys = pair.txns?.m5?.buys || 0;
+    const sells = pair.txns?.m5?.sells || 0;
+    const buySellRatio = sells
+      ? (buys / sells).toFixed(2)
+      : buys > 0
+        ? "∞"
+        : "0";
+    const price = parseFloat(pair.priceUsd) || 0;
+    const priceLine = `${formatUsdPrice(price)} (${priceChange > 0 ? "+" : ""}${priceChange.toFixed(1)}% 5m)`;
+    const warnings: string[] = [];
     if ((pair.liquidity?.usd || 0) < 10000) {
-      lines.push(`⚠️ Low liquidity`);
+      warnings.push("Low liq");
     }
     if (priceChange < -10) {
-      lines.push(`⚠️ Price dropping`);
+      warnings.push("Dumping");
     }
+    const socialLinks = extractSocialLinks(pair)
+      .slice(0, 2)
+      .map((social) => `[${social.label}](${social.url})`)
+      .join(" • ");
+    const mint = `${graduation.mint.slice(0, 6)}...${graduation.mint.slice(-4)}`;
+    const warningLine = warnings.length ? ` | Flags ${warnings.join(", ")}` : "";
 
-    return lines.filter(Boolean).join("\n");
+    return [
+      `🎓 **$${graduation.symbol}** | Score ${score.toFixed(1)} | Price ${priceLine}`,
+      `Liq $${formatShortNumber(pair.liquidity?.usd || 0)} | Vol5m $${formatShortNumber(pair.volume?.m5 || 0)} | MCap $${formatShortNumber(pair.marketCap || 0)} | Buys/Sells 5m ${buys}/${sells} (${buySellRatio}x)${warningLine}`,
+      `${socialLinks ? `🔗 ${socialLinks} | ` : ""}📊 [DexScreener](${pair.url}) | \`${mint}\``,
+    ].join("\n");
+  }
+
+  private shouldTriggerBonus(
+    performance: CallPerformance,
+    pair: DexScreenerPair,
+    roiPct: number
+  ): boolean {
+    if (performance.callPrice <= 0) return false;
+    const priceChangeM5 = pair.priceChange?.m5 ?? 0;
+    const volumeM5 = pair.volume?.m5 ?? 0;
+    const buys = pair.txns?.m5?.buys ?? 0;
+    const sells = pair.txns?.m5?.sells ?? 0;
+    const buySellRatio = sells > 0 ? buys / sells : buys > 0 ? Number.POSITIVE_INFINITY : 0;
+
+    return (
+      roiPct >= BONUS_MIN_GAIN_PCT &&
+      priceChangeM5 >= BONUS_MIN_PRICE_CHANGE_M5 &&
+      volumeM5 >= BONUS_MIN_VOLUME_M5 &&
+      buySellRatio >= BONUS_MIN_BUY_SELL_RATIO
+    );
+  }
+
+  private formatBonusAlert(
+    performance: CallPerformance,
+    pair: DexScreenerPair,
+    roiPct: number
+  ): string {
+    const price = parseFloat(pair.priceUsd) || performance.lastPrice;
+    const priceChangeM5 = pair.priceChange?.m5 ?? 0;
+    const volumeM5 = pair.volume?.m5 ?? 0;
+    const buys = pair.txns?.m5?.buys ?? 0;
+    const sells = pair.txns?.m5?.sells ?? 0;
+    const buySellRatio = sells > 0 ? buys / sells : buys > 0 ? Number.POSITIVE_INFINITY : 0;
+    const ratioLabel = sells > 0 ? `${buySellRatio.toFixed(2)}x` : buys > 0 ? "∞" : "0x";
+
+    return [
+      `⚡ **BONUS BUYING POWER** | **$${performance.tokenSymbol}** +${roiPct.toFixed(1)}% since call`,
+      `Price ${formatUsdPrice(price)} (${priceChangeM5 >= 0 ? "+" : ""}${priceChangeM5.toFixed(1)}% 5m) | Buys/Sells 5m ${buys}/${sells} (${ratioLabel}) | Vol5m $${formatShortNumber(volumeM5)} | ATH ${formatUsdPrice(performance.athPrice || price)}`,
+      `📊 [DexScreener](${pair.url}) | \`${performance.callId}\``,
+    ].join("\n");
+  }
+
+  private async updateCallPerformances(): Promise<void> {
+    if (this.performanceRunning) return;
+    this.performanceRunning = true;
+
+    try {
+      const storage = getStorage();
+      const guilds = await storage.getAllGuilds();
+      const since = new Date(Date.now() - PERFORMANCE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+
+      for (const guild of guilds) {
+        const performances = await storage.getCallPerformancesSince(
+          guild.guildId,
+          since,
+          PERFORMANCE_LOG_LIMIT
+        );
+
+        if (performances.length === 0) {
+          continue;
+        }
+
+        for (const performance of performances) {
+          if (!performance.tokenAddress || performance.callPrice <= 0) {
+            continue;
+          }
+
+          const pair = await this.dexProvider.getPairByMint(performance.tokenAddress);
+          if (!pair || !pair.priceUsd) {
+            continue;
+          }
+
+          const currentPrice = parseFloat(pair.priceUsd);
+          if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
+            continue;
+          }
+
+          const updated: CallPerformance = {
+            ...performance,
+            lastPrice: currentPrice,
+            lastCheckedAt: new Date(),
+          };
+
+          if (currentPrice > performance.athPrice) {
+            updated.athPrice = currentPrice;
+            updated.athAt = new Date();
+          }
+
+          const roiPct = ((currentPrice - performance.callPrice) / performance.callPrice) * 100;
+
+          if (!performance.bonusAlertSent && this.shouldTriggerBonus(performance, pair, roiPct)) {
+            const channelId = performance.channelId || guild.channelId;
+            if (channelId) {
+              const message = this.formatBonusAlert(updated, pair, roiPct);
+              const success = await this.sendDiscordMessage(channelId, message);
+              if (success) {
+                updated.bonusAlertSent = true;
+                updated.bonusAlertAt = new Date();
+              }
+            }
+          }
+
+          await storage.upsertCallPerformance(updated);
+        }
+      }
+    } catch (error) {
+      console.error("❌ Failed to update call performance:", error);
+    } finally {
+      this.performanceRunning = false;
+    }
   }
 
   async scanAndNotify(): Promise<{ sent: number; candidates: number }> {
@@ -292,6 +428,20 @@ export class AutopostService {
             triggeredBy: "auto",
             createdAt: new Date(),
           });
+          await storage.upsertCallPerformance({
+            callId: callCard.callId,
+            guildId: guild.guildId,
+            channelId: guild.channelId,
+            tokenAddress: callCard.token.mint,
+            tokenSymbol: callCard.token.symbol,
+            callPrice: callCard.metrics.price,
+            callAt: callCard.timestamp,
+            athPrice: callCard.metrics.price,
+            athAt: callCard.timestamp,
+            lastPrice: callCard.metrics.price,
+            lastCheckedAt: callCard.timestamp,
+            bonusAlertSent: false,
+          });
           recentMints.add(candidate.graduation.mint);
         } else {
           console.log(`   ❌ Failed to send message - check bot permissions`);
@@ -336,16 +486,27 @@ export class AutopostService {
       () => this.scanAndNotify(),
       this.config.intervalMs
     );
+
+    this.performanceIntervalId = setInterval(
+      () => this.updateCallPerformances(),
+      PERFORMANCE_INTERVAL_MS
+    );
     
     // Run immediately
     console.log('🔄 Running initial scan...');
     this.scanAndNotify();
+    console.log('📈 Running initial performance check...');
+    this.updateCallPerformances();
   }
 
   stop() {
     if (this.intervalId) {
       clearInterval(this.intervalId);
       this.intervalId = null;
+    }
+    if (this.performanceIntervalId) {
+      clearInterval(this.performanceIntervalId);
+      this.performanceIntervalId = null;
     }
     this.config.enabled = false;
   }

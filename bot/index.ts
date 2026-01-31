@@ -1,5 +1,5 @@
 import { Client, GatewayIntentBits, Events, REST, Routes, ActivityType } from 'discord.js';
-import type { DexScreenerPair, DisplaySettings, GuildConfig } from '../lib/clawcord/types';
+import type { CallPerformance, DexScreenerPair, DisplaySettings, GuildConfig } from '../lib/clawcord/types';
 import { createPolicy } from '../lib/clawcord/policies';
 import { getStorage } from '../lib/clawcord/storage';
 import { getAutopostService } from '../lib/clawcord/autopost-service';
@@ -54,6 +54,59 @@ const commands = [
             choices: [
               { name: 'Live scans', value: 'live' },
               { name: 'Posted calls', value: 'posted' },
+            ],
+          },
+        ],
+      },
+      {
+        name: 'leaderboard',
+        description: 'Show top calls by ATH performance',
+        type: 1,
+        options: [
+          {
+            name: 'period',
+            description: 'Time window for rankings',
+            type: 3,
+            required: false,
+            choices: [
+              { name: 'Last 24h', value: '24h' },
+              { name: 'Last 7d', value: '7d' },
+              { name: 'Last 30d', value: '30d' },
+            ],
+          },
+        ],
+      },
+      {
+        name: 'digest',
+        description: 'Summarize call performance',
+        type: 1,
+        options: [
+          {
+            name: 'period',
+            description: 'Digest window',
+            type: 3,
+            required: false,
+            choices: [
+              { name: 'Daily (24h)', value: '24h' },
+              { name: 'Weekly (7d)', value: '7d' },
+            ],
+          },
+        ],
+      },
+      {
+        name: 'meta',
+        description: 'View current meta trends',
+        type: 1,
+        options: [
+          {
+            name: 'window',
+            description: 'Time window to sample',
+            type: 3,
+            required: false,
+            choices: [
+              { name: 'Last 6h', value: '6h' },
+              { name: 'Last 24h', value: '24h' },
+              { name: 'Last 7d', value: '7d' },
             ],
           },
         ],
@@ -169,6 +222,19 @@ const DEFAULT_DISPLAY_SETTINGS: DisplaySettings = {
   showLinks: true,
 };
 
+const LEADERBOARD_DEFAULT_LIMIT = 5;
+const PERFORMANCE_LIMIT = 200;
+const META_SAMPLE_LIMIT = 3;
+
+const META_TAGS: Array<{ name: string; keywords: string[]; labels?: string[] }> = [
+  { name: 'AI', keywords: ['ai', 'agent', 'gpt', 'llm', 'neural', 'bot'], labels: ['ai'] },
+  { name: 'Meme', keywords: ['meme', 'dog', 'cat', 'pepe', 'bonk', 'wif', 'frog'], labels: ['meme'] },
+  { name: 'Gaming', keywords: ['game', 'gaming', 'play', 'quest', 'guild', 'arcade'], labels: ['gaming', 'gamefi'] },
+  { name: 'DeFi', keywords: ['defi', 'swap', 'dex', 'yield', 'farm', 'stake', 'lending', 'perp'], labels: ['defi', 'dex', 'amm', 'lending', 'perp'] },
+  { name: 'Infra', keywords: ['infra', 'oracle', 'data', 'node', 'rpc', 'index', 'sdk', 'bridge'], labels: ['infra', 'oracle', 'bridge'] },
+  { name: 'Social', keywords: ['social', 'chat', 'creator', 'fan', 'community', 'club'], labels: ['social'] },
+];
+
 function ensureDisplaySettings(config: GuildConfig): DisplaySettings {
   if (!config.display) {
     config.display = {
@@ -179,6 +245,76 @@ function ensureDisplaySettings(config: GuildConfig): DisplaySettings {
     };
   }
   return config.display;
+}
+
+function formatUsd(value: number): string {
+  if (!Number.isFinite(value)) return '$0';
+  if (value >= 1) return `$${value.toFixed(2)}`;
+  if (value >= 0.01) return `$${value.toFixed(4)}`;
+  return `$${value.toFixed(8)}`;
+}
+
+function formatPercent(value: number): string {
+  if (!Number.isFinite(value)) return '0%';
+  const sign = value >= 0 ? '+' : '';
+  return `${sign}${value.toFixed(1)}%`;
+}
+
+function formatAgeLabel(date: Date): string {
+  const minutes = Math.max(0, Math.floor((Date.now() - date.getTime()) / 60000));
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `${days}d`;
+}
+
+function getPerformanceWindow(period: string | null): { minutes: number; label: string } {
+  switch (period) {
+    case '7d':
+      return { minutes: 10080, label: 'last 7d' };
+    case '30d':
+      return { minutes: 43200, label: 'last 30d' };
+    case '24h':
+    default:
+      return { minutes: 1440, label: 'last 24h' };
+  }
+}
+
+function getMetaWindow(period: string | null): { minutes: number; label: string } {
+  switch (period) {
+    case '7d':
+      return { minutes: 10080, label: 'last 7d' };
+    case '6h':
+      return { minutes: 360, label: 'last 6h' };
+    case '24h':
+    default:
+      return { minutes: 1440, label: 'last 24h' };
+  }
+}
+
+function getRoiPct(performance: CallPerformance): number | null {
+  if (!performance.callPrice || performance.callPrice <= 0) return null;
+  if (!performance.athPrice || performance.athPrice <= 0) return null;
+  return ((performance.athPrice - performance.callPrice) / performance.callPrice) * 100;
+}
+
+function classifyMeta(pair: DexScreenerPair): string[] {
+  const text = `${pair.baseToken.symbol} ${pair.baseToken.name}`.toLowerCase();
+  const labels = (pair.labels || []).map((label) => label.toLowerCase());
+  const categories: string[] = [];
+
+  META_TAGS.forEach((tag) => {
+    const keywordMatch = tag.keywords.some((keyword) => text.includes(keyword));
+    const labelMatch = tag.labels?.some((label) =>
+      labels.some((entry) => entry.includes(label))
+    );
+    if (keywordMatch || labelMatch) {
+      categories.push(tag.name);
+    }
+  });
+
+  return categories;
 }
 
 async function getOrCreateGuildConfig(options: {
@@ -478,6 +614,184 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await interaction.editReply('❌ Failed to scan. Please try again.');
       }
     }
+
+    if (subcommand === 'leaderboard') {
+      if (!interaction.guildId) {
+        await interaction.reply({ content: '❌ This command can only be used in a server.', ephemeral: true });
+        return;
+      }
+
+      await interaction.deferReply();
+
+      const period = interaction.options.getString('period');
+      const { minutes, label } = getPerformanceWindow(period);
+      const since = new Date(Date.now() - minutes * 60 * 1000);
+      const storage = getStorage();
+      const performances = await storage.getCallPerformancesSince(
+        interaction.guildId,
+        since,
+        PERFORMANCE_LIMIT
+      );
+
+      const scored = performances
+        .map((performance) => {
+          const roi = getRoiPct(performance);
+          return roi === null ? null : { performance, roi };
+        })
+        .filter((entry): entry is { performance: CallPerformance; roi: number } => Boolean(entry))
+        .sort((a, b) => b.roi - a.roi)
+        .slice(0, LEADERBOARD_DEFAULT_LIMIT);
+
+      if (scored.length === 0) {
+        await interaction.editReply(`📭 No performance data tracked in the ${label}.`);
+        return;
+      }
+
+      const lines = scored.map((entry, i) => {
+        const perf = entry.performance;
+        const symbol = perf.tokenSymbol || 'UNKNOWN';
+        const mint = perf.tokenAddress;
+        const dexUrl = mint ? `https://dexscreener.com/solana/${mint}` : '';
+
+        return [
+          `**${i + 1}. $${symbol}** ${formatPercent(entry.roi)} ATH`,
+          `   call ${formatUsd(perf.callPrice)} → ${formatUsd(perf.athPrice)} | ${formatAgeLabel(perf.callAt)} ago`,
+          dexUrl ? `   📊 [DexScreener](${dexUrl}) | \`${mint.slice(0, 6)}...${mint.slice(-4)}\`` : null,
+        ]
+          .filter(Boolean)
+          .join('\n');
+      });
+
+      await interaction.editReply({
+        content: [
+          `🏆 **Top Calls (${label})**`,
+          '',
+          lines.join('\n\n'),
+          '',
+          `_Tracked ${performances.length} call${performances.length !== 1 ? 's' : ''} in the ${label}_`,
+        ].join('\n'),
+      });
+    }
+
+    if (subcommand === 'digest') {
+      if (!interaction.guildId) {
+        await interaction.reply({ content: '❌ This command can only be used in a server.', ephemeral: true });
+        return;
+      }
+
+      await interaction.deferReply();
+
+      const period = interaction.options.getString('period');
+      const { minutes, label } = getPerformanceWindow(period || '24h');
+      const since = new Date(Date.now() - minutes * 60 * 1000);
+      const storage = getStorage();
+      const performances = await storage.getCallPerformancesSince(
+        interaction.guildId,
+        since,
+        PERFORMANCE_LIMIT
+      );
+
+      const scored = performances
+        .map((performance) => {
+          const roi = getRoiPct(performance);
+          return roi === null ? null : { performance, roi };
+        })
+        .filter((entry): entry is { performance: CallPerformance; roi: number } => Boolean(entry))
+        .sort((a, b) => b.roi - a.roi);
+
+      if (scored.length === 0) {
+        await interaction.editReply(`📭 No performance data tracked in the ${label}.`);
+        return;
+      }
+
+      const avgRoi = scored.reduce((sum, entry) => sum + entry.roi, 0) / scored.length;
+      const best = scored[0];
+      const bestLabel = best
+        ? `$${best.performance.tokenSymbol} ${formatPercent(best.roi)}`
+        : 'N/A';
+      const topLines = scored.slice(0, 3).map((entry, i) => {
+        const perf = entry.performance;
+        return `**${i + 1}. $${perf.tokenSymbol}** ${formatPercent(entry.roi)} | ${formatUsd(perf.callPrice)} → ${formatUsd(perf.athPrice)}`;
+      });
+
+      await interaction.editReply({
+        content: [
+          `📊 **Performance Digest (${label})**`,
+          '',
+          `Calls tracked: ${performances.length}`,
+          `Avg ATH ROI: ${formatPercent(avgRoi)} | Best: ${bestLabel}`,
+          '',
+          '**Top performers:**',
+          topLines.join('\n'),
+        ].join('\n'),
+      });
+    }
+
+    if (subcommand === 'meta') {
+      await interaction.deferReply();
+
+      const window = interaction.options.getString('window');
+      const { minutes, label } = getMetaWindow(window);
+      const cutoff = Date.now() - minutes * 60 * 1000;
+      const limit = minutes >= 10080 ? 250 : minutes >= 1440 ? 200 : 120;
+      const pairs = await manualDexProvider.getLatestPumpFunGraduations(limit);
+      const filtered = pairs
+        .filter((pair) => pair.pairCreatedAt && pair.pairCreatedAt >= cutoff)
+        .filter((pair) => (pair.liquidity?.usd || 0) > 5000);
+
+      if (filtered.length === 0) {
+        await interaction.editReply(`📭 No recent launches found in the ${label}.`);
+        return;
+      }
+
+      const buckets = new Map<string, { count: number; samples: string[] }>();
+      let unclassified = 0;
+
+      filtered.forEach((pair) => {
+        const categories = classifyMeta(pair);
+        if (categories.length === 0) {
+          unclassified += 1;
+          return;
+        }
+        categories.forEach((category) => {
+          const entry = buckets.get(category) || { count: 0, samples: [] };
+          entry.count += 1;
+          const symbol = pair.baseToken.symbol || 'UNKNOWN';
+          if (entry.samples.length < META_SAMPLE_LIMIT && !entry.samples.includes(symbol)) {
+            entry.samples.push(symbol);
+          }
+          buckets.set(category, entry);
+        });
+      });
+
+      const ranked = Array.from(buckets.entries())
+        .sort((a, b) => b[1].count - a[1].count)
+        .slice(0, 6);
+
+      if (ranked.length === 0) {
+        await interaction.editReply(`📭 No dominant themes detected in the ${label}.`);
+        return;
+      }
+
+      const lines = ranked.map(([category, entry], index) => {
+        const samples = entry.samples.length
+          ? ` (${entry.samples.map((symbol) => `$${symbol}`).join(', ')})`
+          : '';
+        return `${index + 1}. **${category}** — ${entry.count} token${entry.count !== 1 ? 's' : ''}${samples}`;
+      });
+
+      const tail = unclassified > 0 ? `Unclassified: ${unclassified}` : null;
+
+      await interaction.editReply({
+        content: [
+          `📈 **Meta Trend Snapshot (${label})**`,
+          '',
+          lines.join('\n'),
+          '',
+          `Sampled ${filtered.length} launches${tail ? ` | ${tail}` : ''}`,
+        ].join('\n'),
+      });
+    }
     
     if (subcommand === 'policy') {
       const preset = interaction.options.getString('preset');
@@ -504,6 +818,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
           '🦀 **ClawCord Commands**',
           '',
           '`/clawcord scan` — Scan for new PumpFun graduations',
+          '`/clawcord leaderboard` — Top calls by ATH performance',
+          '`/clawcord digest` — Daily/weekly performance digest',
+          '`/clawcord meta` — Trending themes from new launches',
           '`/clawcord policy` — View or change policy preset',
           '`/clawcord help` — Show this help message',
           '',

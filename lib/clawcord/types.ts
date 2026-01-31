@@ -143,6 +143,22 @@ export interface CallLog {
   createdAt: Date;
 }
 
+export interface CallPerformance {
+  callId: string;
+  guildId: string;
+  channelId: string;
+  tokenAddress: string;
+  tokenSymbol: string;
+  callPrice: number;
+  callAt: Date;
+  athPrice: number;
+  athAt?: Date;
+  lastPrice: number;
+  lastCheckedAt?: Date;
+  bonusAlertSent: boolean;
+  bonusAlertAt?: Date;
+}
+
 // Discord Command Types
 export type CommandName =
   | "install"

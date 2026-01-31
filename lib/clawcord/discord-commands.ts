@@ -29,6 +29,21 @@ interface StorageInterface {
   saveGuildConfig(config: GuildConfig): Promise<void>;
   addCallLog(guildId: string, log: CallLog | (CallCard & Partial<CallLog>)): Promise<void>;
   getCallLogs(guildId: string, limit: number): Promise<CallLog[]>;
+  upsertCallPerformance(performance: {
+    callId: string;
+    guildId: string;
+    channelId: string;
+    tokenAddress: string;
+    tokenSymbol: string;
+    callPrice: number;
+    callAt: Date;
+    athPrice: number;
+    athAt?: Date;
+    lastPrice: number;
+    lastCheckedAt?: Date;
+    bonusAlertSent: boolean;
+    bonusAlertAt?: Date;
+  }): Promise<void>;
 }
 
 const commands: Record<CommandName, CommandHandler> = {
@@ -367,6 +382,21 @@ async function handleCall(
     triggeredBy: "manual",
     userId: ctx.userId,
     createdAt: new Date(),
+  });
+
+  await storage.upsertCallPerformance({
+    callId: result.card.callId,
+    guildId: ctx.guildId,
+    channelId: ctx.channelId,
+    tokenAddress: result.card.token.mint,
+    tokenSymbol: result.card.token.symbol,
+    callPrice: result.card.metrics.price,
+    callAt: result.card.timestamp,
+    athPrice: result.card.metrics.price,
+    athAt: result.card.timestamp,
+    lastPrice: result.card.metrics.price,
+    lastCheckedAt: result.card.timestamp,
+    bonusAlertSent: false,
   });
 
   config.callCount++;

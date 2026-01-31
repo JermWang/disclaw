@@ -42,11 +42,31 @@ CREATE TABLE IF NOT EXISTS call_history (
   posted_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Call Performance Table (tracking ATH / ROI)
+CREATE TABLE IF NOT EXISTS call_performance (
+  call_id TEXT PRIMARY KEY,
+  guild_id TEXT NOT NULL REFERENCES guild_settings(guild_id) ON DELETE CASCADE,
+  channel_id TEXT,
+  token_address TEXT NOT NULL,
+  token_symbol TEXT,
+  call_price DECIMAL(32,16) DEFAULT 0,
+  call_at TIMESTAMPTZ NOT NULL,
+  ath_price DECIMAL(32,16) DEFAULT 0,
+  ath_at TIMESTAMPTZ,
+  last_price DECIMAL(32,16) DEFAULT 0,
+  last_checked_at TIMESTAMPTZ,
+  bonus_alert_sent BOOLEAN DEFAULT false,
+  bonus_alert_at TIMESTAMPTZ
+);
+
 -- Create index for faster lookups
 CREATE INDEX IF NOT EXISTS idx_guild_settings_guild_id ON guild_settings(guild_id);
 CREATE INDEX IF NOT EXISTS idx_call_history_guild_id ON call_history(guild_id);
 CREATE INDEX IF NOT EXISTS idx_call_history_token ON call_history(token_address);
 CREATE INDEX IF NOT EXISTS idx_call_history_posted ON call_history(posted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_call_performance_guild_id ON call_performance(guild_id);
+CREATE INDEX IF NOT EXISTS idx_call_performance_call_at ON call_performance(call_at DESC);
+CREATE INDEX IF NOT EXISTS idx_call_performance_token ON call_performance(token_address);
 
 -- Function to auto-update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -67,12 +87,16 @@ CREATE TRIGGER update_guild_settings_updated_at
 -- Enable Row Level Security (RLS)
 ALTER TABLE guild_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE call_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE call_performance ENABLE ROW LEVEL SECURITY;
 
 -- Policy for service role (bot) to access all data
 CREATE POLICY "Service role can access all guild_settings" ON guild_settings
   FOR ALL USING (true);
 
 CREATE POLICY "Service role can access all call_history" ON call_history
+  FOR ALL USING (true);
+
+CREATE POLICY "Service role can access all call_performance" ON call_performance
   FOR ALL USING (true);
 
 -- Useful views

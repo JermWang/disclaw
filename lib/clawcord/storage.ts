@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import type {
   CallCard,
   CallLog,
+  CallPerformance,
   DisplaySettings,
   GuildConfig,
   Policy,
@@ -21,6 +22,24 @@ if (!supabase) {
   console.warn("⚠️ Supabase not configured - using in-memory storage");
 }
 
+function mapCallPerformance(row: CallPerformanceRow): CallPerformance {
+  return {
+    callId: row.call_id,
+    guildId: row.guild_id,
+    channelId: row.channel_id || "",
+    tokenAddress: row.token_address,
+    tokenSymbol: row.token_symbol || "UNKNOWN",
+    callPrice: parseNumber(row.call_price, 0),
+    callAt: row.call_at ? parseDate(row.call_at) : new Date(),
+    athPrice: parseNumber(row.ath_price, 0),
+    athAt: row.ath_at ? parseDate(row.ath_at) : undefined,
+    lastPrice: parseNumber(row.last_price, 0),
+    lastCheckedAt: row.last_checked_at ? parseDate(row.last_checked_at) : undefined,
+    bonusAlertSent: row.bonus_alert_sent ?? false,
+    bonusAlertAt: row.bonus_alert_at ? parseDate(row.bonus_alert_at) : undefined,
+  };
+}
+
 export interface StorageStats {
   totalGuilds: number;
   totalCalls: number;
@@ -34,6 +53,8 @@ export interface Storage {
   addCallLog(guildId: string, log: CallLog | (CallCard & Partial<CallLog>)): Promise<void>;
   getCallLogs(guildId: string, limit?: number): Promise<CallLog[]>;
   getCallLogsSince(guildId: string, since: Date, limit?: number): Promise<CallLog[]>;
+  upsertCallPerformance(performance: CallPerformance): Promise<void>;
+  getCallPerformancesSince(guildId: string, since: Date, limit?: number): Promise<CallPerformance[]>;
   getAllGuilds(): Promise<GuildConfig[]>;
   getStats(): Promise<StorageStats>;
 }
@@ -74,6 +95,22 @@ type CallHistoryRow = {
   liquidity: number | null;
   message_id: string | null;
   posted_at: string | null;
+};
+
+type CallPerformanceRow = {
+  call_id: string;
+  guild_id: string;
+  channel_id: string | null;
+  token_address: string;
+  token_symbol: string | null;
+  call_price: number | string | null;
+  call_at: string | null;
+  ath_price: number | string | null;
+  ath_at: string | null;
+  last_price: number | string | null;
+  last_checked_at: string | null;
+  bonus_alert_sent: boolean | null;
+  bonus_alert_at: string | null;
 };
 
 const VALID_POLICY_PRESETS: PolicyPreset[] = [
@@ -271,6 +308,7 @@ function normalizeCallLog(guildId: string, log: CallLog | (CallCard & Partial<Ca
 class InMemoryStorage implements Storage {
   private guilds: Map<string, GuildConfig> = new Map();
   private callLogs: Map<string, CallLog[]> = new Map();
+  private performances: Map<string, CallPerformance> = new Map();
 
   async getGuildConfig(guildId: string): Promise<GuildConfig | null> {
     return this.guilds.get(guildId) || null;
@@ -304,6 +342,17 @@ class InMemoryStorage implements Storage {
     const logs = this.callLogs.get(guildId) || [];
     const filtered = logs.filter((log) => log.createdAt >= since);
     return filtered.slice(0, limit);
+  }
+
+  async upsertCallPerformance(performance: CallPerformance): Promise<void> {
+    this.performances.set(performance.callId, performance);
+  }
+
+  async getCallPerformancesSince(guildId: string, since: Date, limit: number = 200): Promise<CallPerformance[]> {
+    const items = Array.from(this.performances.values())
+      .filter((perf) => perf.guildId === guildId && perf.callAt >= since)
+      .sort((a, b) => b.callAt.getTime() - a.callAt.getTime());
+    return items.slice(0, limit);
   }
 
   async getAllGuilds(): Promise<GuildConfig[]> {
@@ -456,6 +505,53 @@ class SupabaseStorage implements Storage {
         createdAt: entry.posted_at ? parseDate(entry.posted_at) : new Date(),
       };
     });
+  }
+
+  async upsertCallPerformance(performance: CallPerformance): Promise<void> {
+    if (!supabase) return;
+
+    const payload = {
+      call_id: performance.callId,
+      guild_id: performance.guildId,
+      channel_id: performance.channelId || null,
+      token_address: performance.tokenAddress,
+      token_symbol: performance.tokenSymbol,
+      call_price: performance.callPrice,
+      call_at: performance.callAt.toISOString(),
+      ath_price: performance.athPrice,
+      ath_at: performance.athAt ? performance.athAt.toISOString() : null,
+      last_price: performance.lastPrice,
+      last_checked_at: performance.lastCheckedAt ? performance.lastCheckedAt.toISOString() : null,
+      bonus_alert_sent: performance.bonusAlertSent,
+      bonus_alert_at: performance.bonusAlertAt ? performance.bonusAlertAt.toISOString() : null,
+    };
+
+    const { error } = await supabase
+      .from("call_performance")
+      .upsert(payload, { onConflict: "call_id" });
+
+    if (error) {
+      console.error("Supabase call performance upsert failed:", error);
+    }
+  }
+
+  async getCallPerformancesSince(guildId: string, since: Date, limit: number = 200): Promise<CallPerformance[]> {
+    if (!supabase) return [];
+
+    const { data, error } = await supabase
+      .from("call_performance")
+      .select("*")
+      .eq("guild_id", guildId)
+      .gte("call_at", since.toISOString())
+      .order("call_at", { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      console.error("Supabase call performance lookup failed:", error);
+      return [];
+    }
+
+    return (data || []).map((row) => mapCallPerformance(row as CallPerformanceRow));
   }
 
   async getCallLogsSince(guildId: string, since: Date, limit: number = 50): Promise<CallLog[]> {
