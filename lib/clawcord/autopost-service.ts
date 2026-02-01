@@ -1,4 +1,12 @@
-import type { GraduationCandidate, GuildConfig, CallLog, DexScreenerPair, CallPerformance } from "./types";
+import type {
+  GraduationCandidate,
+  GuildConfig,
+  CallLog,
+  DexScreenerPair,
+  CallPerformance,
+  DisplaySettings,
+  TokenMetrics,
+} from "./types";
 import { DexScreenerProvider, GraduationWatcher, DEFAULT_GRADUATION_FILTER } from "./dexscreener-provider";
 import { scoreToken } from "./scoring";
 import { generateCallCard } from "./call-card";
@@ -27,6 +35,26 @@ const BONUS_MIN_GAIN_PCT = 30;
 const BONUS_MIN_PRICE_CHANGE_M5 = 10;
 const BONUS_MIN_BUY_SELL_RATIO = 2;
 const BONUS_MIN_VOLUME_M5 = 5000;
+
+const DISCORD_SUPPRESS_EMBEDS_FLAG = 1 << 2;
+
+const CLAWCORD_MINT = "8JFUtwhEzSmrVa56re8rZdathHc9fqmr2em9XMQMpump";
+const WSOL_MINT = "So11111111111111111111111111111111111111112";
+const CLAWCORD_ALERT_INTERVAL_MS = 60_000;
+const CLAWCORD_ALERT_COOLDOWN_MS = 30 * 60 * 1000;
+const CLAWCORD_PUMP_PRICE_CHANGE_M5 = 25;
+const CLAWCORD_PUMP_MIN_VOLUME_M5 = 5000;
+const CLAWCORD_MAJOR_BUY_SOL = 8;
+const CLAWCORD_MAJOR_BUY_MIN_BUYS = 1;
+const CLAWCORD_MAJOR_BUY_MIN_BUY_SELL_RATIO = 1.2;
+const SOL_PRICE_CACHE_MS = 5 * 60 * 1000;
+const SOL_PRICE_FALLBACK_USD = 150;
+
+type ClawcordAlertType = "pump" | "major_buy";
+type ClawcordAlertTimes = {
+  pump?: number;
+  major_buy?: number;
+};
 
 interface SocialLink {
   label: string;
@@ -117,6 +145,10 @@ export class AutopostService {
   private intervalId: NodeJS.Timeout | null = null;
   private performanceIntervalId: NodeJS.Timeout | null = null;
   private performanceRunning = false;
+  private clawcordIntervalId: NodeJS.Timeout | null = null;
+  private clawcordAlertRunning = false;
+  private lastClawcordAlertAt = new Map<string, ClawcordAlertTimes>();
+  private solPriceCache: { value: number; timestamp: number } | null = null;
   private config: AutopostConfig;
   private dexProvider: DexScreenerProvider;
 
@@ -142,7 +174,7 @@ export class AutopostService {
             Authorization: `Bot ${token}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ content }),
+          body: JSON.stringify({ content, flags: DISCORD_SUPPRESS_EMBEDS_FLAG }),
         }
       );
 
@@ -164,8 +196,8 @@ export class AutopostService {
     }
   }
 
-  formatGraduationCall(candidate: GraduationCandidate): string {
-    const { graduation, pair, score } = candidate;
+  formatGraduationCall(candidate: GraduationCandidate, display?: DisplaySettings): string {
+    const { graduation, pair, score, metrics } = candidate;
     const priceChange = pair.priceChange?.m5 || 0;
     const buys = pair.txns?.m5?.buys || 0;
     const sells = pair.txns?.m5?.sells || 0;
@@ -189,12 +221,143 @@ export class AutopostService {
       .join(" • ");
     const mint = `${graduation.mint.slice(0, 6)}...${graduation.mint.slice(-4)}`;
     const warningLine = warnings.length ? ` | Flags ${warnings.join(", ")}` : "";
+    const showCreatorWhale = display?.showCreatorWhale ?? false;
+    const creatorWhaleLine = showCreatorWhale ? this.formatCreatorWhaleLine(metrics) : null;
 
     return [
       `🎓 **$${graduation.symbol}** | Score ${score.toFixed(1)} | Price ${priceLine}`,
       `Liq $${formatShortNumber(pair.liquidity?.usd || 0)} | Vol5m $${formatShortNumber(pair.volume?.m5 || 0)} | MCap $${formatShortNumber(pair.marketCap || 0)} | Buys/Sells 5m ${buys}/${sells} (${buySellRatio}x)${warningLine}`,
+      creatorWhaleLine,
       `${socialLinks ? `🔗 ${socialLinks} | ` : ""}📊 [DexScreener](${pair.url}) | \`${mint}\``,
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  private formatCreatorWhaleLine(metrics: TokenMetrics): string | null {
+    if (!metrics.creatorIsWhale || !metrics.creatorAddress) return null;
+    const holdPct = metrics.creatorHoldPct;
+    if (holdPct === undefined || !Number.isFinite(holdPct)) return null;
+    const shortAddress = `${metrics.creatorAddress.slice(0, 6)}...${metrics.creatorAddress.slice(-4)}`;
+    return `🐋 Creator wallet ${holdPct.toFixed(2)}% | \`${shortAddress}\``;
+  }
+
+  private async getSolPriceUsd(): Promise<number> {
+    const cached = this.solPriceCache;
+    if (cached && Date.now() - cached.timestamp < SOL_PRICE_CACHE_MS) {
+      return cached.value;
+    }
+
+    const pair = await this.dexProvider.getPairByMint(WSOL_MINT);
+    const price = pair?.priceUsd ? parseFloat(pair.priceUsd) : Number.NaN;
+    const value = Number.isFinite(price) && price > 0 ? price : SOL_PRICE_FALLBACK_USD;
+
+    this.solPriceCache = { value, timestamp: Date.now() };
+    return value;
+  }
+
+  private canSendClawcordAlert(guildId: string, type: ClawcordAlertType): boolean {
+    const last = this.lastClawcordAlertAt.get(guildId)?.[type];
+    if (!last) return true;
+    return Date.now() - last >= CLAWCORD_ALERT_COOLDOWN_MS;
+  }
+
+  private markClawcordAlertSent(guildId: string, type: ClawcordAlertType): void {
+    const entry = this.lastClawcordAlertAt.get(guildId) ?? {};
+    entry[type] = Date.now();
+    this.lastClawcordAlertAt.set(guildId, entry);
+  }
+
+  private formatClawcordAlert(
+    pair: DexScreenerPair,
+    type: ClawcordAlertType,
+    avgBuySol?: number
+  ): string {
+    const price = parseFloat(pair.priceUsd) || 0;
+    const priceChangeM5 = pair.priceChange?.m5 ?? 0;
+    const volumeM5 = pair.volume?.m5 ?? 0;
+    const buys = pair.txns?.m5?.buys ?? 0;
+    const sells = pair.txns?.m5?.sells ?? 0;
+    const buySellRatio = sells > 0 ? buys / sells : buys > 0 ? Number.POSITIVE_INFINITY : 0;
+    const ratioLabel = sells > 0 ? `${buySellRatio.toFixed(2)}x` : buys > 0 ? "∞" : "0x";
+    const priceLine = `${formatUsdPrice(price)} (${priceChangeM5 >= 0 ? "+" : ""}${priceChangeM5.toFixed(1)}% 5m)`;
+    const dexUrl = pair.url || `https://dexscreener.com/solana/${CLAWCORD_MINT}`;
+    const mention = "@everyone";
+    const title = type === "pump" ? "🚀 **$CLAWCORD PUMPING**" : "🐋 **$CLAWCORD MAJOR BUY**";
+    const extra =
+      type === "major_buy" && avgBuySol && Number.isFinite(avgBuySol)
+        ? ` | Est. avg buy ${avgBuySol.toFixed(1)} SOL`
+        : "";
+
+    return [
+      `${mention} ${title} | Price ${priceLine}`,
+      `Vol5m $${formatShortNumber(volumeM5)} | Buys/Sells 5m ${buys}/${sells} (${ratioLabel}) | Liq $${formatShortNumber(pair.liquidity?.usd || 0)}${extra}`,
+      `CA: \`${CLAWCORD_MINT}\` | 📊 [DexScreener](${dexUrl})`,
     ].join("\n");
+  }
+
+  private async checkClawcordAlerts(): Promise<void> {
+    if (this.clawcordAlertRunning) return;
+    this.clawcordAlertRunning = true;
+
+    try {
+      const storage = getStorage();
+      const guilds = await storage.getAllGuilds();
+      if (guilds.length === 0) return;
+
+      const pair = await this.dexProvider.getPairByMint(CLAWCORD_MINT);
+      if (!pair || !pair.priceUsd) return;
+
+      const priceChangeM5 = pair.priceChange?.m5 ?? 0;
+      const volumeM5 = pair.volume?.m5 ?? 0;
+      const buys = pair.txns?.m5?.buys ?? 0;
+      const sells = pair.txns?.m5?.sells ?? 0;
+      const buySellRatio = sells > 0 ? buys / sells : buys > 0 ? Number.POSITIVE_INFINITY : 0;
+
+      let alertType: ClawcordAlertType | null = null;
+      let avgBuySol: number | undefined;
+
+      const pumpTriggered =
+        priceChangeM5 >= CLAWCORD_PUMP_PRICE_CHANGE_M5 &&
+        volumeM5 >= CLAWCORD_PUMP_MIN_VOLUME_M5;
+
+      if (pumpTriggered) {
+        alertType = "pump";
+      } else {
+        const solPriceUsd = await this.getSolPriceUsd();
+        const majorBuyUsd = solPriceUsd * CLAWCORD_MAJOR_BUY_SOL;
+        const avgBuyUsd = buys > 0 ? volumeM5 / buys : 0;
+        avgBuySol = solPriceUsd > 0 ? avgBuyUsd / solPriceUsd : undefined;
+
+        const majorBuyTriggered =
+          priceChangeM5 >= 0 &&
+          buys >= CLAWCORD_MAJOR_BUY_MIN_BUYS &&
+          buySellRatio >= CLAWCORD_MAJOR_BUY_MIN_BUY_SELL_RATIO &&
+          avgBuyUsd >= majorBuyUsd;
+
+        if (majorBuyTriggered) {
+          alertType = "major_buy";
+        }
+      }
+
+      if (!alertType) return;
+
+      const message = this.formatClawcordAlert(pair, alertType, avgBuySol);
+
+      for (const guild of guilds) {
+        if (!guild.channelId) continue;
+        if (!this.canSendClawcordAlert(guild.guildId, alertType)) continue;
+
+        const success = await this.sendDiscordMessage(guild.channelId, message);
+        if (success) {
+          this.markClawcordAlertSent(guild.guildId, alertType);
+        }
+      }
+    } catch (error) {
+      console.error("❌ Failed to check CLAWCORD alerts:", error);
+    } finally {
+      this.clawcordAlertRunning = false;
+    }
   }
 
   private shouldTriggerBonus(
@@ -406,7 +569,7 @@ export class AutopostService {
           continue;
         }
         console.log(`   📤 Sending call for $${candidate.graduation.symbol} to channel ${guild.channelId}...`);
-        const message = this.formatGraduationCall(candidate);
+        const message = this.formatGraduationCall(candidate, guild.display);
         const success = await this.sendDiscordMessage(guild.channelId, message);
         
         if (success) {
@@ -491,12 +654,19 @@ export class AutopostService {
       () => this.updateCallPerformances(),
       PERFORMANCE_INTERVAL_MS
     );
+
+    this.clawcordIntervalId = setInterval(
+      () => this.checkClawcordAlerts(),
+      CLAWCORD_ALERT_INTERVAL_MS
+    );
     
     // Run immediately
     console.log('🔄 Running initial scan...');
     this.scanAndNotify();
     console.log('📈 Running initial performance check...');
     this.updateCallPerformances();
+    console.log('🐋 Running initial CLAWCORD alert check...');
+    this.checkClawcordAlerts();
   }
 
   stop() {
@@ -507,6 +677,10 @@ export class AutopostService {
     if (this.performanceIntervalId) {
       clearInterval(this.performanceIntervalId);
       this.performanceIntervalId = null;
+    }
+    if (this.clawcordIntervalId) {
+      clearInterval(this.clawcordIntervalId);
+      this.clawcordIntervalId = null;
     }
     this.config.enabled = false;
   }

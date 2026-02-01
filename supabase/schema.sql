@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS guild_settings (
   show_volume BOOLEAN DEFAULT true,
   show_holders BOOLEAN DEFAULT true,
   show_links BOOLEAN DEFAULT true,
+  show_creator_whale BOOLEAN DEFAULT false,
   policy_preset TEXT DEFAULT 'default',
   policy JSONB,
   watchlist JSONB,
@@ -23,6 +24,9 @@ CREATE TABLE IF NOT EXISTS guild_settings (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE guild_settings
+  ADD COLUMN IF NOT EXISTS show_creator_whale BOOLEAN DEFAULT false;
 
 -- Call History Table (for tracking what's been posted)
 CREATE TABLE IF NOT EXISTS call_history (
@@ -90,17 +94,21 @@ ALTER TABLE call_history ENABLE ROW LEVEL SECURITY;
 ALTER TABLE call_performance ENABLE ROW LEVEL SECURITY;
 
 -- Policy for service role (bot) to access all data
+DROP POLICY IF EXISTS "Service role can access all guild_settings" ON guild_settings;
 CREATE POLICY "Service role can access all guild_settings" ON guild_settings
   FOR ALL USING (true);
 
+DROP POLICY IF EXISTS "Service role can access all call_history" ON call_history;
 CREATE POLICY "Service role can access all call_history" ON call_history
   FOR ALL USING (true);
 
+DROP POLICY IF EXISTS "Service role can access all call_performance" ON call_performance;
 CREATE POLICY "Service role can access all call_performance" ON call_performance
   FOR ALL USING (true);
 
 -- Useful views
-CREATE OR REPLACE VIEW recent_calls AS
+DROP VIEW IF EXISTS recent_calls;
+CREATE VIEW recent_calls AS
 SELECT 
   ch.*,
   gs.guild_name
@@ -110,7 +118,8 @@ ORDER BY ch.posted_at DESC
 LIMIT 100;
 
 -- Stats view
-CREATE OR REPLACE VIEW guild_stats AS
+DROP VIEW IF EXISTS guild_stats;
+CREATE VIEW guild_stats AS
 SELECT 
   gs.guild_id,
   gs.guild_name,

@@ -78,6 +78,7 @@ type GuildSettingsRow = {
   show_volume: boolean | null;
   show_holders: boolean | null;
   show_links: boolean | null;
+  show_creator_whale: boolean | null;
 };
 
 type CallHistoryRow = {
@@ -162,6 +163,7 @@ const DEFAULT_DISPLAY_SETTINGS: DisplaySettings = {
   showVolume: true,
   showHolders: true,
   showLinks: true,
+  showCreatorWhale: false,
 };
 
 function buildPolicy(guildId: string, row: GuildSettingsRow): Policy {
@@ -205,6 +207,7 @@ function buildDisplaySettings(row: GuildSettingsRow, policy: Policy): DisplaySet
     showVolume: row.show_volume ?? DEFAULT_DISPLAY_SETTINGS.showVolume,
     showHolders: row.show_holders ?? DEFAULT_DISPLAY_SETTINGS.showHolders,
     showLinks: row.show_links ?? DEFAULT_DISPLAY_SETTINGS.showLinks,
+    showCreatorWhale: row.show_creator_whale ?? DEFAULT_DISPLAY_SETTINGS.showCreatorWhale,
   };
 }
 
@@ -403,6 +406,7 @@ class SupabaseStorage implements Storage {
       showVolume: DEFAULT_DISPLAY_SETTINGS.showVolume,
       showHolders: DEFAULT_DISPLAY_SETTINGS.showHolders,
       showLinks: DEFAULT_DISPLAY_SETTINGS.showLinks,
+      showCreatorWhale: DEFAULT_DISPLAY_SETTINGS.showCreatorWhale,
     };
 
     const payload = {
@@ -422,6 +426,7 @@ class SupabaseStorage implements Storage {
       show_volume: display.showVolume,
       show_holders: display.showHolders,
       show_links: display.showLinks,
+      show_creator_whale: display.showCreatorWhale,
       updated_at: new Date().toISOString(),
     };
 

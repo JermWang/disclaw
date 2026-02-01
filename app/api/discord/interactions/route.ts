@@ -22,6 +22,8 @@ const InteractionResponseType = {
   MODAL: 9,
 } as const;
 
+const DISCORD_SUPPRESS_EMBEDS_FLAG = 1 << 2;
+
 // Verify Discord signature (simplified - in production use discord-interactions library)
 async function verifyDiscordRequest(request: NextRequest): Promise<boolean> {
   const signature = request.headers.get("x-signature-ed25519");
@@ -84,7 +86,7 @@ export async function POST(request: NextRequest) {
         type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
         data: {
           content: response.content,
-          flags: response.ephemeral ? 64 : 0, // 64 = ephemeral flag
+          flags: (response.ephemeral ? 64 : 0) | DISCORD_SUPPRESS_EMBEDS_FLAG, // 64 = ephemeral flag
         },
       });
     } catch (error) {

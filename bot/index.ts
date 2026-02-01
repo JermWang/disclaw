@@ -196,6 +196,12 @@ const commands = [
             type: 5,
             required: false,
           },
+          {
+            name: 'creator_whale',
+            description: 'Show creator whale wallets',
+            type: 5,
+            required: false,
+          },
         ],
       },
     ],
@@ -220,6 +226,7 @@ const DEFAULT_DISPLAY_SETTINGS: DisplaySettings = {
   showVolume: true,
   showHolders: true,
   showLinks: true,
+  showCreatorWhale: false,
 };
 
 const LEADERBOARD_DEFAULT_LIMIT = 5;
@@ -242,6 +249,7 @@ function ensureDisplaySettings(config: GuildConfig): DisplaySettings {
       showVolume: DEFAULT_DISPLAY_SETTINGS.showVolume,
       showHolders: DEFAULT_DISPLAY_SETTINGS.showHolders,
       showLinks: DEFAULT_DISPLAY_SETTINGS.showLinks,
+      showCreatorWhale: DEFAULT_DISPLAY_SETTINGS.showCreatorWhale,
     };
   }
   return config.display;
@@ -353,6 +361,7 @@ async function getOrCreateGuildConfig(options: {
       showVolume: DEFAULT_DISPLAY_SETTINGS.showVolume,
       showHolders: DEFAULT_DISPLAY_SETTINGS.showHolders,
       showLinks: DEFAULT_DISPLAY_SETTINGS.showLinks,
+      showCreatorWhale: DEFAULT_DISPLAY_SETTINGS.showCreatorWhale,
     },
   };
 
@@ -874,6 +883,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           `• Volume: ${display.showVolume ? '✅' : '❌'}`,
           `• Holders: ${display.showHolders ? '✅' : '❌'}`,
           `• Links: ${display.showLinks ? '✅' : '❌'}`,
+          `• Creator whale: ${display.showCreatorWhale ? '✅' : '❌'}`,
         ].join('\n'),
         ephemeral: true,
       });
@@ -908,10 +918,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const volume = interaction.options.getBoolean('volume');
       const holders = interaction.options.getBoolean('holders');
       const links = interaction.options.getBoolean('links');
+      const creatorWhale = interaction.options.getBoolean('creator_whale');
 
       if (volume !== null) display.showVolume = volume;
       if (holders !== null) display.showHolders = holders;
       if (links !== null) display.showLinks = links;
+      if (creatorWhale !== null) display.showCreatorWhale = creatorWhale;
       config.updatedAt = new Date();
       await storage.saveGuildConfig(config);
 
@@ -922,6 +934,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           `• Volume: ${display.showVolume ? '✅ Shown' : '❌ Hidden'}`,
           `• Holders: ${display.showHolders ? '✅ Shown' : '❌ Hidden'}`,
           `• Links: ${display.showLinks ? '✅ Shown' : '❌ Hidden'}`,
+          `• Creator whale: ${display.showCreatorWhale ? '✅ Shown' : '❌ Hidden'}`,
         ].join('\n'),
         ephemeral: true,
       });

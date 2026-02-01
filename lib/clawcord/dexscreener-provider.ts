@@ -240,12 +240,16 @@ export class GraduationWatcher {
       
       // Enrich metrics with Helius holder data
       try {
-        const [holderCount, topHolderConcentration] = await Promise.all([
+        const [holderCount, topHolderConcentration, creatorHold] = await Promise.all([
           helius.getTokenHolderCount(pair.baseToken.address),
           helius.getTopHolderConcentration(pair.baseToken.address, 10),
+          helius.getCreatorHoldInfo(pair.baseToken.address),
         ]);
         metrics.holders = holderCount;
         metrics.topHolderConcentration = topHolderConcentration;
+        metrics.creatorAddress = creatorHold.creatorAddress;
+        metrics.creatorHoldPct = creatorHold.creatorHoldPct;
+        metrics.creatorIsWhale = creatorHold.creatorIsWhale;
       } catch (error) {
         // Continue with default values if Helius fails
         console.warn(`Failed to fetch Helius data for ${pair.baseToken.symbol}:`, error);

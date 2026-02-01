@@ -1,5 +1,7 @@
 import type { TokenMetrics, DeployerHistory, TokenDataProvider } from "./types";
 
+const CREATOR_WHALE_THRESHOLD_PCT = 5;
+
 // Stub implementation - replace with real API calls to:
 // - Birdeye, DexScreener, Jupiter, Helius, etc.
 
@@ -17,6 +19,7 @@ export class SolanaDataProvider implements TokenDataProvider {
     // - On-chain for authorities
 
     // Stub with realistic-looking data for demo
+    const creatorHoldPct = Math.random() * 12;
     const mockMetrics: TokenMetrics = {
       mint,
       symbol: "DEMO",
@@ -38,6 +41,9 @@ export class SolanaDataProvider implements TokenDataProvider {
       deployerAddress: "Demo...Deployer",
       deployerPriorTokens: Math.floor(Math.random() * 10),
       deployerRugCount: Math.floor(Math.random() * 3),
+      creatorAddress: "Demo...Creator",
+      creatorHoldPct,
+      creatorIsWhale: creatorHoldPct >= CREATOR_WHALE_THRESHOLD_PCT,
     };
 
     return mockMetrics;
@@ -129,6 +135,142 @@ export class HeliusProvider {
 
   private setCache(key: string, data: unknown): void {
     this.cache.set(key, { data, timestamp: Date.now() });
+  }
+
+  private async getMintAccountInfo(mint: string): Promise<{
+    mintAuthority?: string;
+    supply: number;
+    decimals: number;
+  } | null> {
+    if (!this.apiKey) return null;
+
+    const cacheKey = `mint-info-${mint}`;
+    const cached = this.getCached<{ mintAuthority?: string; supply: number; decimals: number }>(cacheKey);
+    if (cached !== null) return cached;
+
+    try {
+      const response = await fetch(this.rpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: `mint-info-${mint}`,
+          method: "getAccountInfo",
+          params: [mint, { encoding: "jsonParsed" }],
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Helius RPC error: ${response.status}`);
+      }
+
+      const data = await response.json() as {
+        result?: {
+          value?: {
+            data?: {
+              parsed?: { info?: { mintAuthority?: string | null; supply?: string; decimals?: number } };
+            };
+          };
+        };
+      };
+
+      const info = data.result?.value?.data?.parsed?.info;
+      if (!info || info.supply === undefined || info.decimals === undefined) {
+        return null;
+      }
+
+      const supply = Number(info.supply ?? 0);
+      const mintInfo = {
+        mintAuthority: info.mintAuthority || undefined,
+        supply: Number.isFinite(supply) ? supply : 0,
+        decimals: Number(info.decimals ?? 0),
+      };
+
+      this.setCache(cacheKey, mintInfo);
+      return mintInfo;
+    } catch (error) {
+      console.error(`Failed to fetch mint info for ${mint}:`, error);
+      return null;
+    }
+  }
+
+  private async getTokenBalanceByOwner(owner: string, mint: string): Promise<number> {
+    if (!this.apiKey) return 0;
+
+    try {
+      const response = await fetch(this.rpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: `token-accounts-${owner}-${mint}`,
+          method: "getTokenAccountsByOwner",
+          params: [owner, { mint }, { encoding: "jsonParsed" }],
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Helius RPC error: ${response.status}`);
+      }
+
+      const data = await response.json() as {
+        result?: {
+          value?: Array<{
+            account?: {
+              data?: {
+                parsed?: { info?: { tokenAmount?: { amount?: string } } };
+              };
+            };
+          }>;
+        };
+      };
+
+      const accounts = data.result?.value ?? [];
+      return accounts.reduce((total, entry) => {
+        const amount = entry.account?.data?.parsed?.info?.tokenAmount?.amount;
+        if (!amount) return total;
+        const parsed = Number(amount);
+        return Number.isFinite(parsed) ? total + parsed : total;
+      }, 0);
+    } catch (error) {
+      console.error(`Failed to fetch token balance for ${owner}:`, error);
+      return 0;
+    }
+  }
+
+  async getCreatorHoldInfo(mint: string): Promise<{
+    creatorAddress?: string;
+    creatorHoldPct?: number;
+    creatorIsWhale?: boolean;
+  }> {
+    if (!this.apiKey) {
+      console.warn("Helius API key not configured");
+      return {};
+    }
+
+    const cacheKey = `creator-hold-${mint}`;
+    const cached = this.getCached<{ creatorAddress?: string; creatorHoldPct?: number; creatorIsWhale?: boolean }>(cacheKey);
+    if (cached !== null) return cached;
+
+    const mintInfo = await this.getMintAccountInfo(mint);
+    if (!mintInfo || !mintInfo.mintAuthority) {
+      return {};
+    }
+
+    const balance = await this.getTokenBalanceByOwner(mintInfo.mintAuthority, mint);
+    const supply = mintInfo.supply;
+
+    const creatorHoldPct = supply > 0 ? (balance / supply) * 100 : 0;
+    const creatorIsWhale = creatorHoldPct >= CREATOR_WHALE_THRESHOLD_PCT;
+
+    const result = {
+      creatorAddress: mintInfo.mintAuthority,
+      creatorHoldPct: Number.isFinite(creatorHoldPct) ? creatorHoldPct : 0,
+      creatorIsWhale,
+    };
+
+    this.setCache(cacheKey, result);
+    return result;
   }
 
   async getTokenHolderCount(mint: string): Promise<number> {

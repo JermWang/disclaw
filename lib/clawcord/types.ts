@@ -65,6 +65,9 @@ export interface TokenMetrics {
   deployerAddress: string;
   deployerPriorTokens: number;
   deployerRugCount: number;
+  creatorAddress?: string;
+  creatorHoldPct?: number;
+  creatorIsWhale?: boolean;
 }
 
 export interface RiskFlag {
@@ -106,6 +109,7 @@ export interface DisplaySettings {
   showVolume: boolean;
   showHolders: boolean;
   showLinks: boolean;
+  showCreatorWhale: boolean;
 }
 
 export interface GuildConfig {

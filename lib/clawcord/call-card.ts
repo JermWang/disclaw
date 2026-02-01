@@ -1,4 +1,4 @@
-import type { CallCard, TokenMetrics, Policy, ScoringResult } from "./types";
+import type { CallCard, TokenMetrics, Policy, ScoringResult, DisplaySettings } from "./types";
 import { scoreToken, generateRiskFlags, generateInvalidationConditions } from "./scoring";
 import { hashPolicy } from "./policies";
 
@@ -88,7 +88,7 @@ function generatePros(
   return pros.slice(0, 5); // Max 5 pros
 }
 
-export function formatCallCardForDiscord(card: CallCard): string {
+export function formatCallCardForDiscord(card: CallCard, display?: DisplaySettings): string {
   const riskCount = {
     high: card.risks.filter((r) => r.type === "high").length,
     medium: card.risks.filter((r) => r.type === "medium").length,
@@ -98,25 +98,37 @@ export function formatCallCardForDiscord(card: CallCard): string {
   const dexUrl = `https://dexscreener.com/solana/${card.token.mint}`;
   const priceChange = card.metrics.priceChange24h;
   const priceLine = `${formatPrice(card.metrics.price)} (${priceChange >= 0 ? "+" : ""}${priceChange.toFixed(1)}%/24h)`;
+  const showVolume = display?.showVolume ?? true;
+  const showHolders = display?.showHolders ?? true;
+  const showLinks = display?.showLinks ?? true;
+  const showCreatorWhale = display?.showCreatorWhale ?? false;
   const metricsLine = [
     `Price ${priceLine}`,
-    `Vol ${formatNumber(card.metrics.volume24h)}`,
+    showVolume ? `Vol ${formatNumber(card.metrics.volume24h)}` : null,
     `Liq ${formatNumber(card.metrics.liquidity)}`,
-    `Holders ${card.metrics.holders}`,
+    showHolders ? `Holders ${card.metrics.holders}` : null,
     `Age ${card.metrics.tokenAgeHours.toFixed(1)}h`,
-  ].join(" | ");
+  ]
+    .filter(Boolean)
+    .join(" | ");
+  const creatorWhaleLine = showCreatorWhale ? formatCreatorWhaleLine(card.metrics) : null;
   const metaLine = `Triggers ${card.triggers.length} | Pros ${card.pros.length} | Risks ${riskCount.high}H/${riskCount.medium}M/${riskCount.low}L | ID ${card.callId}`;
-  const contractLine = `CA: \`${card.token.mint}\` | 📊 [DexScreener](${dexUrl})`;
+  const contractLine = showLinks
+    ? `CA: \`${card.token.mint}\` | 📊 [DexScreener](${dexUrl})`
+    : `CA: \`${card.token.mint}\``;
 
   return [
     `**$${card.token.symbol}** \`${mint}\` | Score ${card.confidence.toFixed(1)}/10 | ${card.policy.name}`,
     metricsLine,
+    creatorWhaleLine,
     metaLine,
     contractLine,
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
-export function formatCallCardCompact(card: CallCard): string {
+export function formatCallCardCompact(card: CallCard, display?: DisplaySettings): string {
   const riskCount = {
     high: card.risks.filter((r) => r.type === "high").length,
     medium: card.risks.filter((r) => r.type === "medium").length,
@@ -124,11 +136,28 @@ export function formatCallCardCompact(card: CallCard): string {
   };
   const mint = `${card.token.mint.slice(0, 6)}...${card.token.mint.slice(-4)}`;
   const dexUrl = `https://dexscreener.com/solana/${card.token.mint}`;
+  const showLinks = display?.showLinks ?? true;
+  const showCreatorWhale = display?.showCreatorWhale ?? false;
+  const creatorWhaleLine = showCreatorWhale ? formatCreatorWhaleLine(card.metrics) : null;
+  const contractLine = showLinks
+    ? `CA: \`${card.token.mint}\` | 📊 [DexScreener](${dexUrl}) | ID ${card.callId}`
+    : `CA: \`${card.token.mint}\` | ID ${card.callId}`;
 
   return [
     `**$${card.token.symbol}** \`${mint}\` | Score ${card.confidence.toFixed(1)}/10 | Trig ${card.triggers.length} | Risks ${riskCount.high}H/${riskCount.medium}M/${riskCount.low}L`,
-    `CA: \`${card.token.mint}\` | 📊 [DexScreener](${dexUrl}) | ID ${card.callId}`,
-  ].join("\n");
+    contractLine,
+    creatorWhaleLine,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function formatCreatorWhaleLine(metrics: TokenMetrics): string | null {
+  if (!metrics.creatorIsWhale || !metrics.creatorAddress) return null;
+  const holdPct = metrics.creatorHoldPct;
+  if (holdPct === undefined || !Number.isFinite(holdPct)) return null;
+  const shortAddress = `${metrics.creatorAddress.slice(0, 6)}...${metrics.creatorAddress.slice(-4)}`;
+  return `🐋 Creator wallet ${holdPct.toFixed(2)}% | \`${shortAddress}\``;
 }
 
 function formatNumber(num: number): string {

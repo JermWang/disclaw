@@ -9,7 +9,7 @@ import type {
 } from "./types";
 import { createPolicy, getPolicyPresets, validateThresholds } from "./policies";
 import { createDataProvider } from "./data-providers";
-import { processCallRequest, formatCallCardForDiscord, formatCallCardCompact } from "./call-card";
+import { processCallRequest, formatCallCardForDiscord } from "./call-card";
 
 // Command handlers
 type CommandHandler = (
@@ -404,7 +404,7 @@ async function handleCall(
   await storage.saveGuildConfig(config);
 
   return {
-    content: formatCallCardForDiscord(result.card),
+    content: formatCallCardForDiscord(result.card, config.display),
   };
 }
 
