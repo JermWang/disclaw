@@ -7,7 +7,7 @@
     "dev": "next dev",
     "lint": "eslint .",
     "start": "next start",
-    "bot": "npx tsx bot/index.ts",
+    "bot": "npx tsx --env-file=.env bot/index.ts",
     "bot:build": "tsc -p bot/tsconfig.json",
     "bot:start": "node dist/bot/index.js"
   },
