@@ -396,14 +396,26 @@ async function getOrCreateGuildConfig(options: {
 
 async function registerCommands() {
   const rest = new REST({ version: '10' }).setToken(DISCORD_BOT_TOKEN);
-  
+  const guildId = process.env.DISCORD_DEV_GUILD_ID;
+
   try {
-    console.log('🔄 Registering slash commands...');
-    await rest.put(
-      Routes.applicationCommands(DISCORD_APPLICATION_ID),
-      { body: commands }
-    );
-    console.log('✅ Slash commands registered');
+    if (guildId) {
+      // Guild-specific = instant propagation (use for dev/testing)
+      console.log(`🔄 Registering slash commands to guild ${guildId} (instant)...`);
+      await rest.put(
+        Routes.applicationGuildCommands(DISCORD_APPLICATION_ID, guildId),
+        { body: commands }
+      );
+      console.log('✅ Slash commands registered to guild (instant)');
+    } else {
+      // Global = up to 1 hour propagation
+      console.log('🔄 Registering slash commands globally (up to 1hr to propagate)...');
+      await rest.put(
+        Routes.applicationCommands(DISCORD_APPLICATION_ID),
+        { body: commands }
+      );
+      console.log('✅ Slash commands registered globally');
+    }
   } catch (error) {
     console.error('❌ Failed to register commands:', error);
   }
