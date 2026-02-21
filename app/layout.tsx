@@ -23,9 +23,10 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
+  metadataBase: new URL('https://www.disclaw.online'),
   title: 'DISCLAW - Whale Tracker & Signal Caller',
   description: 'Whale wallet tracking and policy-driven signal calling for Solana tokens. Follow the smart money and automate your Discord calls.',
-  generator: 'v0.app',
+  generator: 'DISCLAW',
   icons: {
     icon: '/disclaw-logo.png',
     apple: '/disclaw-logo.png',

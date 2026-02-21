@@ -430,7 +430,7 @@ export default function DisclawLanding() {
                   Add to Discord — It&apos;s Free
                 </a>
                 <a
-                  href="https://discord.gg/NZEKBbqj2q"
+                  href="https://discord.gg/fBUBVaaHhF"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-2 bg-white/6 hover:bg-white/12 text-white px-8 py-4 rounded-xl text-base font-semibold transition-all duration-200 border border-white/10"
@@ -519,7 +519,7 @@ export default function DisclawLanding() {
                 title: "Resources", 
                 links: [
                   { name: "Documentation", href: "/docs" },
-                  { name: "Discord", href: "https://discord.gg/NZEKBbqj2q" },
+                  { name: "Discord", href: "https://discord.gg/fBUBVaaHhF" },
                   { name: "Telegram", href: "https://t.me/BlueClawCallsBot" },
                   { name: "Status", href: "/status" },
                 ] 
