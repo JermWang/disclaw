@@ -1,7 +1,8 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Github, Twitter, Zap, Shield, BarChart3, Users, Terminal, Play, Bot, TrendingUp, Target, Clock, Wallet } from "lucide-react";
+import { useState } from "react";
+import { Github, Twitter, Zap, Shield, BarChart3, Users, Terminal, Play, Bot, TrendingUp, Target, Clock, Wallet, Copy, Check } from "lucide-react";
 import Image from "next/image";
 import { Header } from "@/components/disclaw/header";
 import { AsciiShader } from "@/components/ascii-shader";
@@ -87,6 +88,33 @@ const features = [
   },
 ];
 
+const CA = process.env.NEXT_PUBLIC_DISCLAW_MINT ?? "D1fffNVSDn3ntCUrRw2DU6UjynFiTou3HqN8UqJNpump";
+
+function CopyCA() {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(CA);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      className="mt-6 inline-flex items-center gap-3 px-4 py-2.5 rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md hover:bg-white/10 hover:border-[#5865F2]/40 transition-all duration-200 group max-w-full"
+    >
+      <span className="text-[10px] uppercase tracking-widest text-[#5865F2] font-semibold shrink-0">CA</span>
+      <span className="font-mono text-xs text-white/60 group-hover:text-white/80 transition-colors truncate">
+        {CA}
+      </span>
+      <span className="shrink-0 text-white/40 group-hover:text-[#5865F2] transition-colors">
+        {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+      </span>
+    </button>
+  );
+}
+
 export default function DisclawLanding() {
   return (
     <div className="flex min-h-screen flex-col bg-[#12121f] relative overflow-hidden">
@@ -160,6 +188,9 @@ export default function DisclawLanding() {
                 See Commands
               </a>
             </div>
+
+            {/* Contract Address */}
+            <CopyCA />
 
             {/* Powered by */}
             <motion.a
