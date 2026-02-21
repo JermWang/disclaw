@@ -1,0 +1,437 @@
+import type {
+  DexScreenerPair,
+  PumpFunGraduation,
+  GraduationFilter,
+  GraduationCandidate,
+  TokenMetrics,
+} from "./types";
+import { getHeliusProvider } from "./data-providers";
+
+const DEXSCREENER_API = process.env.DEXSCREENER_BASE_URL || "https://api.dexscreener.com";
+const PUMPFUN_PROGRAM_ID = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
+const RAYDIUM_V4 = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8";
+
+export class DexScreenerProvider {
+  private cache: Map<string, { data: DexScreenerPair[]; timestamp: number }> = new Map();
+  private cacheTTL = 30_000; // 30 seconds
+
+  async getLatestPumpFunGraduations(limit = 50): Promise<DexScreenerPair[]> {
+    const cacheKey = `pumpfun-graduations-${limit}`;
+    const cached = this.cache.get(cacheKey);
+    
+    if (cached && Date.now() - cached.timestamp < this.cacheTTL) {
+      return cached.data;
+    }
+    const [profilePairs, pumpSwapPairs, raydiumPairs] = await Promise.all([
+      this.getLatestPairsFromProfiles(limit),
+      this.searchTokens("pumpswap"),
+      this.searchTokens("raydium"),
+    ]);
+
+    const mergedPairs = this.mergePumpfunPairs(
+      [...profilePairs, ...pumpSwapPairs, ...raydiumPairs],
+      limit
+    );
+
+    if (mergedPairs.length === 0) {
+      console.warn(`No PumpFun pairs found across profiles, PumpSwap, or Raydium.`);
+      return [];
+    }
+
+    this.cache.set(cacheKey, { data: mergedPairs, timestamp: Date.now() });
+    return mergedPairs;
+  }
+
+  private async getLatestPairsFromProfiles(limit = 50): Promise<DexScreenerPair[]> {
+    try {
+      const response = await fetch(`${DEXSCREENER_API}/token-profiles/latest/v1`, {
+        headers: {
+          "Accept": "application/json",
+          "User-Agent": "ClawCord/1.0",
+        },
+      });
+
+      if (!response.ok) {
+        console.warn(`DexScreener token profiles error: ${response.status}`);
+        return [];
+      }
+
+      const profiles = await response.json() as Array<{
+        chainId?: string;
+        tokenAddress?: string;
+      }>;
+
+      const solanaMints = profiles
+        .filter(
+          (profile) =>
+            profile.chainId === "solana" &&
+            profile.tokenAddress &&
+            this.isPumpfunMint(profile.tokenAddress)
+        )
+        .map((profile) => profile.tokenAddress as string)
+        .slice(0, Math.max(10, Math.min(limit, 30)));
+
+      if (solanaMints.length === 0) {
+        return [];
+      }
+
+      const pairs = await Promise.all(
+        solanaMints.map((mint) => this.getPairByMint(mint))
+      );
+
+      return pairs.filter((pair): pair is DexScreenerPair => Boolean(pair));
+    } catch (error) {
+      console.error("Failed to fetch DexScreener token profiles:", error);
+      return [];
+    }
+  }
+
+  private mergePumpfunPairs(pairs: DexScreenerPair[], limit: number): DexScreenerPair[] {
+    const filtered = pairs.filter(
+      (pair) =>
+        pair.chainId === "solana" &&
+        (pair.dexId === "raydium" || pair.dexId === "pumpswap") &&
+        this.isPumpfunMint(pair.baseToken.address)
+    );
+
+    const byMint = new Map<string, DexScreenerPair>();
+    for (const pair of filtered) {
+      const existing = byMint.get(pair.baseToken.address);
+      if (!existing) {
+        byMint.set(pair.baseToken.address, pair);
+        continue;
+      }
+
+      const existingLiq = existing.liquidity?.usd || 0;
+      const candidateLiq = pair.liquidity?.usd || 0;
+      if (candidateLiq > existingLiq) {
+        byMint.set(pair.baseToken.address, pair);
+      }
+    }
+
+    return Array.from(byMint.values())
+      .sort((a, b) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0))
+      .slice(0, limit);
+  }
+
+  private isPumpfunMint(mint: string): boolean {
+    return mint.toLowerCase().endsWith("pump");
+  }
+
+  async getPairByMint(mint: string): Promise<DexScreenerPair | null> {
+    try {
+      const response = await fetch(
+        `${DEXSCREENER_API}/latest/dex/tokens/${mint}`,
+        {
+          headers: {
+            "Accept": "application/json",
+            "User-Agent": "ClawCord/1.0",
+          },
+        }
+      );
+
+      if (!response.ok) {
+        return null;
+      }
+
+      const data = await response.json() as { pairs?: DexScreenerPair[] };
+      const pairs: DexScreenerPair[] = data.pairs || [];
+
+      // Return the most liquid Raydium or PumpSwap pair
+      const graduatedPairs = pairs
+        .filter(
+          (p) =>
+            p.chainId === "solana" &&
+            (p.dexId === "raydium" || p.dexId === "pumpswap")
+        )
+        .sort((a, b) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0));
+
+      return graduatedPairs[0] || null;
+    } catch (error) {
+      console.error(`Failed to fetch pair for ${mint}:`, error);
+      return null;
+    }
+  }
+
+  async searchTokens(query: string): Promise<DexScreenerPair[]> {
+    try {
+      const response = await fetch(
+        `${DEXSCREENER_API}/latest/dex/search?q=${encodeURIComponent(query)}`,
+        {
+          headers: {
+            "Accept": "application/json",
+            "User-Agent": "ClawCord/1.0",
+          },
+        }
+      );
+
+      if (!response.ok) {
+        return [];
+      }
+
+      const data = await response.json() as { pairs?: DexScreenerPair[] };
+      const pairs: DexScreenerPair[] = data.pairs || [];
+
+      return pairs.filter(
+        (p) =>
+          p.chainId === "solana" &&
+          (p.dexId === "raydium" || p.dexId === "pumpswap")
+      );
+    } catch (error) {
+      console.error(`Failed to search tokens:`, error);
+      return [];
+    }
+  }
+
+  pairToMetrics(pair: DexScreenerPair): TokenMetrics {
+    const ageMs = Date.now() - pair.pairCreatedAt;
+    const ageHours = ageMs / (1000 * 60 * 60);
+
+    return {
+      mint: pair.baseToken.address,
+      symbol: pair.baseToken.symbol,
+      name: pair.baseToken.name,
+      price: parseFloat(pair.priceUsd) || 0,
+      priceChange24h: pair.priceChange?.h24 || 0,
+      volume24h: pair.volume?.h24 || 0,
+      volumeChange: pair.volume?.h1 
+        ? ((pair.volume.h1 * 24) / (pair.volume.h24 || 1) - 1) * 100 
+        : 0,
+      liquidity: pair.liquidity?.usd || 0,
+      liquidityChange: 0, // Would need historical data
+      holders: 0, // DexScreener doesn't provide this, need Helius
+      holdersChange: 0,
+      topHolderConcentration: 0, // Need on-chain data
+      tokenAgeHours: ageHours,
+      mintAuthority: false, // Need on-chain verification
+      freezeAuthority: false,
+      lpLocked: false, // Need to check LP token burns
+      lpAge: ageHours,
+      deployerAddress: "", // Need to trace deployer
+      deployerPriorTokens: 0,
+      deployerRugCount: 0,
+    };
+  }
+}
+
+export class GraduationWatcher {
+  private dexProvider: DexScreenerProvider;
+  private seenMints: Set<string> = new Set();
+  private subscribers: Map<string, (candidate: GraduationCandidate) => void> = new Map();
+
+  constructor() {
+    this.dexProvider = new DexScreenerProvider();
+  }
+
+  async scanForGraduations(
+    filter: GraduationFilter
+  ): Promise<GraduationCandidate[]> {
+    const pairs = await this.dexProvider.getLatestPumpFunGraduations(100);
+    const candidates: GraduationCandidate[] = [];
+    const helius = getHeliusProvider();
+
+    for (const pair of pairs) {
+      // Skip if we've already seen this token
+      if (this.seenMints.has(pair.baseToken.address)) {
+        continue;
+      }
+
+      const metrics = this.dexProvider.pairToMetrics(pair);
+      
+      // Enrich metrics with Helius holder data
+      try {
+        const [holderCount, topHolderConcentration, creatorHold] = await Promise.all([
+          helius.getTokenHolderCount(pair.baseToken.address),
+          helius.getTopHolderConcentration(pair.baseToken.address, 10),
+          helius.getCreatorHoldInfo(pair.baseToken.address),
+        ]);
+        metrics.holders = holderCount;
+        metrics.topHolderConcentration = topHolderConcentration;
+        metrics.creatorAddress = creatorHold.creatorAddress;
+        metrics.creatorHoldPct = creatorHold.creatorHoldPct;
+        metrics.creatorIsWhale = creatorHold.creatorIsWhale;
+      } catch (error) {
+        // Continue with default values if Helius fails
+        console.warn(`Failed to fetch Helius data for ${pair.baseToken.symbol}:`, error);
+      }
+
+      const { passes, failures } = this.applyFilter(pair, metrics, filter);
+
+      // Create graduation info
+      const graduation: PumpFunGraduation = {
+        mint: pair.baseToken.address,
+        symbol: pair.baseToken.symbol,
+        name: pair.baseToken.name,
+        graduatedAt: new Date(pair.pairCreatedAt),
+        bondingCurveAddress: "", // Would need PumpFun API
+        raydiumPairAddress: pair.pairAddress,
+        initialLiquidity: pair.liquidity?.usd || 0,
+        initialMarketCap: pair.marketCap || 0,
+        creatorAddress: "", // Would need on-chain trace
+        imageUrl: pair.info?.imageUrl,
+      };
+
+      // Calculate a simple score based on metrics
+      const score = this.calculateScore(pair, metrics);
+
+      candidates.push({
+        graduation,
+        pair,
+        metrics,
+        score,
+        passesFilter: passes,
+        filterFailures: failures,
+      });
+
+      // Mark as seen
+      this.seenMints.add(pair.baseToken.address);
+    }
+
+    // Sort by score descending
+    return candidates.sort((a, b) => b.score - a.score);
+  }
+
+  private applyFilter(
+    pair: DexScreenerPair,
+    metrics: TokenMetrics,
+    filter: GraduationFilter
+  ): { passes: boolean; failures: string[] } {
+    const failures: string[] = [];
+
+    // Check liquidity
+    if ((pair.liquidity?.usd || 0) < filter.minLiquidity) {
+      failures.push(
+        `Liquidity $${pair.liquidity?.usd?.toFixed(0) || 0} < $${filter.minLiquidity}`
+      );
+    }
+
+    // Check 5m volume
+    if ((pair.volume?.m5 || 0) < filter.minVolume5m) {
+      failures.push(
+        `5m volume $${pair.volume?.m5?.toFixed(0) || 0} < $${filter.minVolume5m}`
+      );
+    }
+
+    // Check age
+    const ageMinutes = (Date.now() - pair.pairCreatedAt) / (1000 * 60);
+    if (ageMinutes > filter.maxAgeMinutes) {
+      failures.push(
+        `Age ${ageMinutes.toFixed(0)}m > ${filter.maxAgeMinutes}m`
+      );
+    }
+
+    // Check holder count (now available via Helius)
+    if (metrics.holders > 0 && metrics.holders < filter.minHolders) {
+      failures.push(
+        `Holders ${metrics.holders} < ${filter.minHolders}`
+      );
+    }
+
+    // Check top holder concentration (whale risk)
+    if (metrics.topHolderConcentration > 50) {
+      failures.push(
+        `Top 10 holders own ${metrics.topHolderConcentration.toFixed(1)}% (high concentration)`
+      );
+    }
+
+    return {
+      passes: failures.length === 0,
+      failures,
+    };
+  }
+
+  private calculateScore(pair: DexScreenerPair, metrics: TokenMetrics): number {
+    let score = 5; // Base score
+
+    // Volume momentum (5m vs 1h average)
+    const vol5m = pair.volume?.m5 || 0;
+    const vol1hAvg = (pair.volume?.h1 || 0) / 12;
+    if (vol5m > vol1hAvg * 2) score += 1.5;
+    else if (vol5m > vol1hAvg * 1.5) score += 1;
+    else if (vol5m < vol1hAvg * 0.5) score -= 1;
+
+    // Liquidity health
+    const liq = pair.liquidity?.usd || 0;
+    if (liq > 50000) score += 1;
+    else if (liq > 20000) score += 0.5;
+    else if (liq < 5000) score -= 1;
+
+    // Buy/sell ratio
+    const buys = pair.txns?.m5?.buys || 0;
+    const sells = pair.txns?.m5?.sells || 0;
+    const ratio = sells > 0 ? buys / sells : buys > 0 ? 2 : 1;
+    if (ratio > 2) score += 1;
+    else if (ratio > 1.5) score += 0.5;
+    else if (ratio < 0.5) score -= 1.5;
+
+    // Price momentum
+    const priceChange5m = pair.priceChange?.m5 || 0;
+    if (priceChange5m > 20) score += 1;
+    else if (priceChange5m > 10) score += 0.5;
+    else if (priceChange5m < -20) score -= 1;
+
+    // Market cap sanity
+    const mcap = pair.marketCap || 0;
+    if (mcap > 100000 && mcap < 5000000) score += 0.5;
+    else if (mcap > 10000000) score -= 0.5;
+
+    // Holder distribution (from Helius)
+    const holders = metrics.holders;
+    if (holders > 200) score += 1;
+    else if (holders > 100) score += 0.5;
+    else if (holders < 30 && holders > 0) score -= 0.5;
+
+    // Top holder concentration (lower is better)
+    const concentration = metrics.topHolderConcentration;
+    if (concentration > 0) {
+      if (concentration < 20) score += 1;
+      else if (concentration < 35) score += 0.5;
+      else if (concentration > 60) score -= 1;
+      else if (concentration > 45) score -= 0.5;
+    }
+
+    return Math.max(0, Math.min(10, score));
+  }
+
+  subscribe(id: string, callback: (candidate: GraduationCandidate) => void) {
+    this.subscribers.set(id, callback);
+  }
+
+  unsubscribe(id: string) {
+    this.subscribers.delete(id);
+  }
+
+  clearSeenMints() {
+    this.seenMints.clear();
+  }
+}
+
+// Optimized defaults based on PumpFun graduation research:
+// - Tokens graduate at ~$75k mcap with ~$12-15k initial liquidity
+// - Best entry window is 15-45 minutes post-graduation
+// - Only ~1-2% of tokens graduate, so these are already filtered
+export const DEFAULT_GRADUATION_FILTER: GraduationFilter = {
+  minLiquidity: 12000,      // Post-graduation baseline from bonding curve
+  minVolume5m: 1000,        // Active trading, not dead on arrival
+  minHolders: 75,           // Healthy distribution, avoid dev-heavy tokens
+  maxAgeMinutes: 45,        // Catch early but after initial dump settles
+  excludeRuggedDeployers: true,
+};
+
+// Aggressive preset for early snipers (higher risk, higher reward)
+export const AGGRESSIVE_GRADUATION_FILTER: GraduationFilter = {
+  minLiquidity: 8000,
+  minVolume5m: 500,
+  minHolders: 40,
+  maxAgeMinutes: 20,        // Very early entry
+  excludeRuggedDeployers: true,
+};
+
+// Conservative preset for safer plays
+export const CONSERVATIVE_GRADUATION_FILTER: GraduationFilter = {
+  minLiquidity: 20000,      // Well-established liquidity
+  minVolume5m: 2000,        // Strong trading activity
+  minHolders: 150,          // Wide distribution
+  maxAgeMinutes: 120,       // More time to prove itself
+  excludeRuggedDeployers: true,
+};

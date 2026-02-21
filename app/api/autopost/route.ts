@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAutopostService } from "@/lib/clawcord/autopost-service";
+import { getAutopostService } from "@/lib/disclaw/autopost-service";
 
 const autopostService = getAutopostService();
 

@@ -1,9 +1,9 @@
 import { Client, GatewayIntentBits, Events, REST, Routes, ActivityType } from 'discord.js';
-import type { CallPerformance, DexScreenerPair, DisplaySettings, GuildConfig } from '../lib/clawcord/types';
-import { createPolicy } from '../lib/clawcord/policies';
-import { getStorage } from '../lib/clawcord/storage';
-import { getAutopostService } from '../lib/clawcord/autopost-service';
-import { DexScreenerProvider } from '../lib/clawcord/dexscreener-provider';
+import type { CallPerformance, DexScreenerPair, DisplaySettings, GuildConfig } from '../lib/disclaw/types';
+import { createPolicy } from '../lib/disclaw/policies';
+import { getStorage } from '../lib/disclaw/storage';
+import { getAutopostService } from '../lib/disclaw/autopost-service';
+import { DexScreenerProvider } from '../lib/disclaw/dexscreener-provider';
 
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN!;
 const DISCORD_APPLICATION_ID = process.env.DISCORD_APPLICATION_ID!;
@@ -18,6 +18,8 @@ if (!DISCORD_APPLICATION_ID) {
   process.exit(1);
 }
 
+const BOT_START_TIME = Date.now();
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -27,8 +29,8 @@ const client = new Client({
 
 const commands = [
   {
-    name: 'clawcord',
-    description: 'ClawCord signal caller commands',
+    name: 'disclaw',
+    description: 'DISCLAW whale tracker & signal caller commands',
     options: [
       {
         name: 'scan',
@@ -134,6 +136,11 @@ const commands = [
         description: 'Show help information',
         type: 1,
       },
+      {
+        name: 'status',
+        description: 'Show bot health: uptime, last scan, Supabase connection',
+        type: 1,
+      },
     ],
   },
   {
@@ -204,11 +211,29 @@ const commands = [
           },
         ],
       },
+      {
+        name: 'ping',
+        description: 'Set who gets pinged on DISCLAW token alerts (@everyone, @here, or none)',
+        type: 1,
+        options: [
+          {
+            name: 'type',
+            description: 'Ping type for token pump/buy alerts',
+            type: 3,
+            required: true,
+            choices: [
+              { name: '@everyone (default)', value: 'everyone' },
+              { name: '@here (online only)', value: 'here' },
+              { name: 'No ping', value: 'none' },
+            ],
+          },
+        ],
+      },
     ],
   },
   {
     name: 'setchannel',
-    description: 'Set which channel ClawCord posts calls to',
+    description: 'Set which channel DISCLAW posts calls to',
     options: [
       {
         name: 'channel',
@@ -514,7 +539,7 @@ client.once(Events.ClientReady, async (c) => {
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
   
-  if (interaction.commandName === 'clawcord') {
+  if (interaction.commandName === 'disclaw') {
     const subcommand = interaction.options.getSubcommand();
     
     if (subcommand === 'scan') {
@@ -816,22 +841,81 @@ client.on(Events.InteractionCreate, async (interaction) => {
           '• `aggressive` — Early entry, higher risk',
           '• `conservative` — Safer plays',
           '',
-          'Use `/clawcord policy preset:<name>` to change.',
+          'Use `/disclaw policy preset:<name>` to change.',
         ].join('\n'));
       }
     }
     
+    if (subcommand === 'status') {
+      await interaction.deferReply({ ephemeral: true });
+
+      const autopostService = getAutopostService();
+      const storage = getStorage();
+
+      // Uptime
+      const uptimeMs = Date.now() - BOT_START_TIME;
+      const uptimeMins = Math.floor(uptimeMs / 60000);
+      const uptimeHours = Math.floor(uptimeMins / 60);
+      const uptimeLabel = uptimeHours > 0
+        ? `${uptimeHours}h ${uptimeMins % 60}m`
+        : `${uptimeMins}m`;
+
+      // Supabase check
+      let dbStatus = '✅ Connected';
+      let totalGuilds = 0;
+      let totalCalls = 0;
+      try {
+        const stats = await storage.getStats();
+        totalGuilds = stats.totalGuilds;
+        totalCalls = stats.totalCalls;
+      } catch {
+        dbStatus = '❌ Error';
+      }
+
+      // Guild-specific info
+      let guildInfo = '';
+      if (interaction.guildId) {
+        const config = await storage.getGuildConfig(interaction.guildId);
+        if (config) {
+          const channelMention = config.channelId ? `<#${config.channelId}>` : 'Not set';
+          const autopostStatus = config.policy.autopostEnabled ? '✅ On' : '❌ Off';
+          const watchlistCount = config.watchlist?.length ?? 0;
+          guildInfo = [
+            '',
+            '**This Server:**',
+            `• Channel: ${channelMention}`,
+            `• Autopost: ${autopostStatus}`,
+            `• Watchlist: ${watchlistCount} item${watchlistCount !== 1 ? 's' : ''}`,
+            `• Min score: ${config.display?.minScore ?? config.policy.thresholds.minConfidenceScore}/10`,
+          ].join('\n');
+        }
+      }
+
+      await interaction.editReply({
+        content: [
+          '🦈 **DISCLAW Bot Status**',
+          '',
+          `🟢 **Online** | Uptime: ${uptimeLabel}`,
+          `🗄️ **Database:** ${dbStatus}`,
+          `🔄 **Autopost service:** ${autopostService.isRunning() ? '✅ Running' : '❌ Stopped'}`,
+          `📊 **Global:** ${totalGuilds} server${totalGuilds !== 1 ? 's' : ''} | ${totalCalls} call${totalCalls !== 1 ? 's' : ''} logged`,
+          guildInfo,
+        ].filter(Boolean).join('\n'),
+      });
+    }
+
     if (subcommand === 'help') {
       await interaction.reply({
         content: [
-          '🦀 **ClawCord Commands**',
+          '🦈 **DISCLAW Commands**',
+          '`/disclaw status` — Bot health & connection info',
           '',
-          '`/clawcord scan` — Scan for new PumpFun graduations',
-          '`/clawcord leaderboard` — Top calls by ATH performance',
-          '`/clawcord digest` — Daily/weekly performance digest',
-          '`/clawcord meta` — Trending themes from new launches',
-          '`/clawcord policy` — View or change policy preset',
-          '`/clawcord help` — Show this help message',
+          '`/disclaw scan` — Scan for new PumpFun graduations',
+          '`/disclaw leaderboard` — Top calls by ATH performance',
+          '`/disclaw digest` — Daily/weekly performance digest',
+          '`/disclaw meta` — Trending themes from new launches',
+          '`/disclaw policy` — View or change policy preset',
+          '`/disclaw help` — Show this help message',
           '',
           '`/settings view` — View current settings',
           '`/settings minscore` — Set minimum score for calls',
@@ -839,12 +923,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
           '`/settings display` — Configure call display options',
           '',
           '`/setchannel` — Set the channel for call alerts',
-          'Reminder: Move the ClawCord bot role above public roles so it can post.',
+          'Reminder: Move the DISCLAW bot role above public roles so it can post.',
           '',
           '**Links:**',
-          '• Website: https://clawcord.xyz',
-          '• Twitter: https://x.com/ClawCordSOL',
+          '• Website: https://disclaw.xyz',
+          '• Twitter: https://x.com/DisclawSOL',
           '• Discord: https://discord.gg/NZEKBbqj2q',
+          '• Telegram: https://t.me/BlueClawCallsBot',
         ].join('\n'),
         ephemeral: true,
       });
@@ -871,13 +956,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (subcommand === 'view') {
       const channelMention = config.channelId ? `<#${config.channelId}>` : 'Not set';
+      const pingLabel = config.alertMention === 'here' ? '@here'
+        : config.alertMention === 'none' ? 'No ping'
+        : '@everyone';
       await interaction.reply({
         content: [
-          '⚙️ **ClawCord Settings**',
+          '⚙️ **DISCLAW Settings**',
           '',
           `📢 **Call Channel:** ${channelMention}`,
           `📊 **Min Score:** ${display.minScore}/10`,
           `🔄 **Autopost:** ${config.policy.autopostEnabled ? '✅ Enabled' : '❌ Disabled'}`,
+          `🔔 **Alert Ping:** ${pingLabel}`,
           '',
           '**Display Options:**',
           `• Volume: ${display.showVolume ? '✅' : '❌'}`,
@@ -908,8 +997,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await storage.saveGuildConfig(config);
       await interaction.reply({
         content: enabled 
-          ? '✅ **Autopost enabled!**\n\nClawCord will automatically post graduation calls to your configured channel.'
-          : '❌ **Autopost disabled.**\n\nUse `/clawcord scan` to manually scan for graduations.',
+          ? '✅ **Autopost enabled!**\n\nDISCLAW will automatically post graduation calls to your configured channel.'
+          : '❌ **Autopost disabled.**\n\nUse `/disclaw scan` to manually scan for graduations.',
         ephemeral: true,
       });
     }
@@ -936,6 +1025,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
           `• Links: ${display.showLinks ? '✅ Shown' : '❌ Hidden'}`,
           `• Creator whale: ${display.showCreatorWhale ? '✅ Shown' : '❌ Hidden'}`,
         ].join('\n'),
+        ephemeral: true,
+      });
+    }
+
+    if (subcommand === 'ping') {
+      const type = interaction.options.getString('type', true) as 'everyone' | 'here' | 'none';
+      config.alertMention = type;
+      config.updatedAt = new Date();
+      await storage.saveGuildConfig(config);
+
+      const label = type === 'everyone' ? '@everyone' : type === 'here' ? '@here' : 'No ping';
+      await interaction.reply({
+        content: `✅ **Alert ping set to: ${label}**\n\nDISCLAW token pump/buy alerts will use this setting.`,
         ephemeral: true,
       });
     }
@@ -967,12 +1069,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
       content: [
         `✅ **Call channel set to ${channel}**`,
         '',
-        'ClawCord will post graduation alerts to this channel.',
+        'DISCLAW will post graduation alerts to this channel.',
         '',
         '**Next steps:**',
         '• Use `/settings autopost enabled:true` to enable automatic posting',
         '• Use `/settings minscore` to set minimum score threshold',
-        '• Use `/clawcord scan` to manually scan for graduations',
+        '• Use `/disclaw scan` to manually scan for graduations',
       ].join('\n'),
     });
 
@@ -988,5 +1090,5 @@ client.on(Events.GuildDelete, (guild) => {
   console.log(`➖ Left server: ${guild.name} (${guild.id})`);
 });
 
-console.log('🚀 Starting ClawCord bot...');
+console.log('🚀 Starting DISCLAW bot...');
 client.login(DISCORD_BOT_TOKEN);

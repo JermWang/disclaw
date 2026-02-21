@@ -1,4 +1,4 @@
--- ClawCord Supabase Schema
+-- DISCLAW Supabase Schema
 -- Run this in your Supabase SQL Editor
 
 -- Guild Settings Table
@@ -27,6 +27,9 @@ CREATE TABLE IF NOT EXISTS guild_settings (
 
 ALTER TABLE guild_settings
   ADD COLUMN IF NOT EXISTS show_creator_whale BOOLEAN DEFAULT false;
+
+ALTER TABLE guild_settings
+  ADD COLUMN IF NOT EXISTS alert_mention TEXT DEFAULT 'everyone' CHECK (alert_mention IN ('everyone', 'here', 'none'));
 
 -- Call History Table (for tracking what's been posted)
 CREATE TABLE IF NOT EXISTS call_history (

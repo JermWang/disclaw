@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { handleCommand } from "@/lib/clawcord/discord-commands";
-import { getStorage } from "@/lib/clawcord/storage";
-import type { CommandName, CommandContext } from "@/lib/clawcord/types";
+import { handleCommand } from "@/lib/disclaw/discord-commands";
+import { getStorage } from "@/lib/disclaw/storage";
+import type { CommandName, CommandContext } from "@/lib/disclaw/types";
 
 // Discord interaction types
 const InteractionType = {

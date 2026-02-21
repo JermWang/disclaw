@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { generateBotInviteUrl } from "@/lib/clawcord/discord-oauth";
+import { generateBotInviteUrl } from "@/lib/disclaw/discord-oauth";
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
@@ -26,11 +26,11 @@ export async function GET(request: NextRequest) {
         success: true,
         inviteUrl,
         instructions: [
-          "1. Click the invite URL to add ClawCord to your server",
+          "1. Click the invite URL to add DISCLAW to your server",
           "2. Select the server and authorize permissions",
-          "3. Use /clawcord install in any channel to complete setup",
-          "4. Configure your policy with /clawcord policy",
-          "5. Enable autopost with /clawcord autopost enabled:true",
+          "3. Use /disclaw install in any channel to complete setup",
+          "4. Configure your policy with /disclaw policy",
+          "5. Enable autopost with /disclaw autopost enabled:true",
         ],
       });
     }

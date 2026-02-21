@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   GraduationWatcher,
   DEFAULT_GRADUATION_FILTER,
-} from "@/lib/clawcord/dexscreener-provider";
-import type { GraduationFilter } from "@/lib/clawcord/types";
+} from "@/lib/disclaw/dexscreener-provider";
+import type { GraduationFilter } from "@/lib/disclaw/types";
 
 const watcher = new GraduationWatcher();
 

@@ -1,7 +1,7 @@
 services:
   # Discord Bot - Background Worker (always running)
   - type: worker
-    name: clawcord-bot
+    name: disclaw-bot
     runtime: node
     buildCommand: npm install && npm run bot:build
     startCommand: npm run bot:start
@@ -23,7 +23,7 @@ services:
 
   # Next.js Web App (optional - for dashboard/website)
   - type: web
-    name: clawcord-web
+    name: disclaw-web
     runtime: node
     buildCommand: npm install && npm run build
     startCommand: npm run start

@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createPolicy } from "@/lib/clawcord/policies";
-import { createDataProvider } from "@/lib/clawcord/data-providers";
-import { processCallRequest, formatCallCardForDiscord } from "@/lib/clawcord/call-card";
-import type { PolicyPreset } from "@/lib/clawcord/types";
+import { createPolicy } from "@/lib/disclaw/policies";
+import { createDataProvider } from "@/lib/disclaw/data-providers";
+import { processCallRequest, formatCallCardForDiscord } from "@/lib/disclaw/call-card";
+import type { PolicyPreset } from "@/lib/disclaw/types";
 
 export async function POST(request: NextRequest) {
   try {
@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
 
 export async function GET() {
   return NextResponse.json({
-    message: "ClawCord Call API",
+    message: "DISCLAW Call API",
     endpoints: {
       "POST /api/call": {
         description: "Generate a call for a token",

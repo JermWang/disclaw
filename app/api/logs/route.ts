@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getStorage } from "@/lib/clawcord/storage";
+import { getStorage } from "@/lib/disclaw/storage";
 
 export async function GET(request: NextRequest) {
   try {

@@ -23,23 +23,23 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'ClawCord - Signal Caller Dashboard',
-  description: 'Policy-driven signal caller for Solana tokens. Automate your Discord calls with configurable policies and real-time data.',
+  title: 'DISCLAW - Whale Tracker & Signal Caller',
+  description: 'Whale wallet tracking and policy-driven signal calling for Solana tokens. Follow the smart money and automate your Discord calls.',
   generator: 'v0.app',
   icons: {
-    icon: '/ClawCord logo.png',
-    apple: '/ClawCord logo.png',
+    icon: '/disclaw-logo.png',
+    apple: '/disclaw-logo.png',
   },
   openGraph: {
-    title: 'ClawCord - Signal Caller Dashboard',
-    description: 'Policy-driven signal caller for Solana tokens. Automate your Discord calls with configurable policies and real-time data.',
-    images: ['/clawcord-banner-v2.png'],
+    title: 'DISCLAW - Whale Tracker & Signal Caller',
+    description: 'Whale wallet tracking and policy-driven signal calling for Solana tokens. Follow the smart money and automate your Discord calls.',
+    images: ['/disclaw-banner.png'],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'ClawCord - Signal Caller Dashboard',
-    description: 'Policy-driven signal caller for Solana tokens.',
-    images: ['/clawcord-banner-v2.png'],
+    title: 'DISCLAW - Whale Tracker & Signal Caller',
+    description: 'Whale wallet tracking and signal calling for Solana.',
+    images: ['/disclaw-banner.png'],
   },
 }
 
