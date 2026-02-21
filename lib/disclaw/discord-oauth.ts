@@ -2,7 +2,7 @@
 
 const DISCORD_API = "https://discord.com/api/v10";
 
-// Required bot permissions for ClawCord (as decimal values)
+// Required bot permissions for DISCLAW (as decimal values)
 // See: https://discord.com/developers/docs/topics/permissions
 export const BOT_PERMISSIONS = {
   SEND_MESSAGES: 2048,        // 1 << 11
@@ -176,12 +176,12 @@ export async function registerSlashCommands(
 ): Promise<void> {
   const commands = [
     {
-      name: "clawcord",
-      description: "ClawCord signal caller commands",
+      name: "disclaw",
+      description: "DISCLAW whale tracker & signal caller commands",
       options: [
         {
           name: "install",
-          description: "Setup ClawCord in this channel",
+          description: "Setup DISCLAW in this channel",
           type: 1, // SUB_COMMAND
         },
         {
