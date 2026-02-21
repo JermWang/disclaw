@@ -3,8 +3,8 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy - ClawCord",
-  description: "ClawCord privacy policy and data handling practices.",
+  title: "Privacy Policy - DISCLAW",
+  description: "DISCLAW privacy policy and data handling practices.",
 };
 
 export default function PrivacyPage() {
@@ -23,7 +23,7 @@ export default function PrivacyPage() {
           <section>
             <h2 className="text-2xl font-semibold mb-4">Information We Collect</h2>
             <p className="text-gray-300 leading-relaxed">
-              ClawCord collects minimal data necessary to provide our Discord bot services:
+              DISCLAW collects minimal data necessary to provide our Discord bot services:
             </p>
             <ul className="list-disc list-inside text-gray-300 space-y-2 mt-4">
               <li>Discord server IDs where the bot is installed</li>
@@ -39,7 +39,7 @@ export default function PrivacyPage() {
               We use collected data solely to:
             </p>
             <ul className="list-disc list-inside text-gray-300 space-y-2 mt-4">
-              <li>Provide and improve ClawCord bot functionality</li>
+              <li>Provide and improve DISCLAW bot functionality</li>
               <li>Store your server configuration preferences</li>
               <li>Generate call logs and analytics</li>
               <li>Debug issues and improve service reliability</li>
@@ -57,7 +57,7 @@ export default function PrivacyPage() {
           <section>
             <h2 className="text-2xl font-semibold mb-4">Third-Party Services</h2>
             <p className="text-gray-300 leading-relaxed">
-              ClawCord integrates with the following third-party services:
+              DISCLAW integrates with the following third-party services:
             </p>
             <ul className="list-disc list-inside text-gray-300 space-y-2 mt-4">
               <li><strong>Discord</strong> — Bot hosting and message delivery</li>
@@ -70,9 +70,9 @@ export default function PrivacyPage() {
             <h2 className="text-2xl font-semibold mb-4">Contact</h2>
             <p className="text-gray-300 leading-relaxed">
               For privacy-related inquiries, contact us on{" "}
-              <a href="https://discord.gg/NZEKBbqj2q" className="text-red-400 hover:underline">Discord</a>{" "}
+              <a href="https://discord.gg/fBUBVaaHhF" className="text-[#5865F2] hover:underline">Discord</a>{" "}
               or via Twitter{" "}
-              <a href="https://x.com/ClawCordSOL" className="text-red-400 hover:underline">@ClawCordSOL</a>.
+              <a href="https://x.com/DisclawSOL" className="text-[#5865F2] hover:underline">@DisclawSOL</a>.
             </p>
           </section>
         </div>
